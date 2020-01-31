@@ -43,3 +43,5 @@ myocamlbuild.ml
 main.ml
 *.opam
 key_gen.ml
+dnsvizor
+
