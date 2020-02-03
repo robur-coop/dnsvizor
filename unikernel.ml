@@ -13,12 +13,10 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
       (* setup stub forwarding state and IP listeners: *)
       Stub.create primary_t s_v4 in
     let _ = stub_t in
-    let rec forever () =
-      (* Since {Stub.create} registers UDP + TCP listeners asynchronously there
-         is no Lwt task.
-         We need to return an infinite Lwt task to prevent the unikernel from
-         exiting early: *)
-      let open Lwt in
-      Time.sleep_ns 1_000_000_000_000_L >>= fun () ->
-      forever () in forever ()
+
+    (* Since {Stub.create} registers UDP + TCP listeners asynchronously there
+       is no Lwt task.
+       We need to return an infinite Lwt task to prevent the unikernel from
+       exiting early: *)
+    fst (Lwt.task ())
 end
