@@ -4,7 +4,7 @@ open Mirage
 
 let upstream_resolver =
   let doc = Key.Arg.info ~doc:"Upstream DNS resolver IP" ["dns-upstream"] in
-  Key.(create "dns-upstream" Arg.(required ipv4_address doc))
+  Key.(create "dns-upstream" Arg.(opt (some ipv4_address) None doc))
 
 let dnsvizor =
   let pin = "git+https://github.com/mirage/ocaml-dns.git" in
