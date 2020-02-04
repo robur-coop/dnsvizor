@@ -15,10 +15,6 @@ _build/
 *.byte
 *.native
 
-# oasis generated files
-setup.data
-setup.log
-
 # Merlin configuring file for Vim and Emacs
 .merlin
 
@@ -41,7 +37,10 @@ dune.config
 dune-project
 myocamlbuild.ml
 main.ml
-*.opam
+*unikernel*.opam
 key_gen.ml
 dnsvizor
-
+dnsvizor.hvt
+dnsvizor.spt
+dnsvizor.xen
+dnsvizor.virtio

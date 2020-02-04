@@ -1,0 +1,16 @@
+opam-version: "2.0"
+maintainer: "team@robur.coop"
+authors: ["team@robur.coop"]
+homepage: "https://github.com/roburio/dnsvizor"
+doc: "https://roburio.github.io/dnsvizor/doc"
+dev-repo: "git+https://github.com/roburio/dnsvizor.git"
+bug-reports: "https://github.com/roburio/dnsvizor/issues"
+license: "public domain"
+
+depends: [
+  "lwt"
+  "mirage" {>= "3.7.4"}
+  "ocaml" {>= "4.07.0"}
+]
+
+synopsis: "Unikernels developed by the robur.coop team"
