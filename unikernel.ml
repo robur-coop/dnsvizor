@@ -6,12 +6,14 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
 
   let start _rng _pclock _mclock _time s_v4 _nocrypto =
     let stub_t =
-      let primary_t =
+      let nameserver = Key_gen.dns_upstream ()
+      and primary_t =
       (* setup DNS server state: *)
         Dns_server.Primary.create ~rng:Nocrypto.Rng.generate Dns_trie.empty
       in
       (* setup stub forwarding state and IP listeners: *)
-      Stub.create primary_t s_v4 in
+      Stub.create ?nameserver primary_t s_v4
+    in
     let _ = stub_t in
 
     (* Since {Stub.create} registers UDP + TCP listeners asynchronously there
