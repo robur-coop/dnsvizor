@@ -7,11 +7,18 @@ let upstream_resolver =
   Key.(create "dns-upstream" Arg.(required ipv4_address doc))
 
 let dnsvizor =
+  let pin = "git+https://github.com/mirage/ocaml-dns.git" in
   let packages =
     [
       package "logs" ;
       package "metrics" ;
-      package ~min:"4.3.1" ~sublibs:["mirage"] "dns-stub";
+      package ~pin ~sublibs:["mirage"] "dns-stub";
+      package ~pin "dns";
+      package ~pin "dns-client";
+      package ~pin "dns-mirage";
+      package ~pin "dns-resolver";
+      package ~pin "dns-tsig";
+      package ~pin "dns-server";
       package "nocrypto";
     ]
   in
