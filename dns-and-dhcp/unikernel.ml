@@ -29,7 +29,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
       udp_listeners : (int, UDP.callback) Hashtbl.t ;
       tcp_listeners : (int, TCP.listener) Hashtbl.t ;
       dhcp_config : Dhcp_server.Config.t ;
-      dhcp_leases : Dhcp_server.Lease.database ;
+      mutable dhcp_leases : Dhcp_server.Lease.database ;
     }
 
     let ipv4 { ip ; _ } = ip
@@ -45,9 +45,31 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
     let listen_tcpv4 ?keepalive { tcp_listeners ; _ } ~port cb =
       Hashtbl.replace tcp_listeners port { TCP.process = cb ; TCP.keepalive }
 
-    let handle_dhcp _t _buf =
-      Logs.warn (fun m -> m "received DHCP packet");
-      Lwt.return_unit
+    let handle_dhcp t buf =
+      match Dhcp_wire.pkt_of_buf buf (Cstruct.len buf) with
+      | Error e ->
+        Logs.err (fun m -> m "Can't parse packet: %s" e);
+        Lwt.return_unit
+      | Ok pkt ->
+        let now = M.elapsed_ns () |> Duration.to_sec |> Int32.of_int in
+        match Dhcp_server.Input.input_pkt t.dhcp_config t.dhcp_leases pkt now with
+      | Dhcp_server.Input.Silence -> Lwt.return_unit
+      | Dhcp_server.Input.Update leases ->
+        t.dhcp_leases <- leases;
+        Logs.debug (fun m -> m "Received packet %s - updated lease database"
+                       (Dhcp_wire.pkt_to_string pkt));
+        Lwt.return_unit
+      | Dhcp_server.Input.Warning w ->
+        Logs.warn (fun m -> m "%s" w);
+        Lwt.return_unit
+      | Dhcp_server.Input.Error e ->
+        Logs.err (fun m -> m "%s" e);
+        Lwt.return_unit
+      | Dhcp_server.Input.Reply (reply, leases) ->
+        t.dhcp_leases <- leases;
+        Logs.debug (fun m -> m "Received packet %s" (Dhcp_wire.pkt_to_string pkt));
+        N.write t.net ~size:(N.mtu t.net + Ethernet_wire.sizeof_ethernet) (Dhcp_wire.pkt_into_buf reply) >|= fun _ ->
+        Logs.debug (fun m -> m "Sent reply packet %s" (Dhcp_wire.pkt_to_string reply))
 
     let listen t =
       let ethif_listener =
@@ -110,10 +132,26 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
     TCP.connect ip >>= fun tcp ->
     let mac = N.mac net in
     let dhcp_config =
-      let addr_tuple = (ip_address, mac) in
+      let options = [
+        Dhcp_wire.Routers [ gateway ] ;
+        Dhcp_wire.Dns_servers [ ip_address ] ;
+        (* Dhcp_wire.Domain_name __ *)
+      ] in
+      let range =
+        (* assumes network being /24; also doesn't check start < stop *)
+        let ip = Ipaddr.V4.to_int32 ip_address in
+        let start = match Key_gen.dhcp_start () with
+          | Some i -> i
+          | None -> Ipaddr.V4.of_int32 (Int32.(logand 0xffffff64l (logor 0x00000064l ip)))
+        and stop = match Key_gen.dhcp_end () with
+          | Some i -> i
+          | None -> Ipaddr.V4.of_int32 (Int32.(logand 0xfffffffel (logor 0x000000fel ip)))
+        in
+        Some (start, stop)
+      in
       Dhcp_server.Config.make
         ?hostname:None ?default_lease_time:None ?max_lease_time:None ?hosts:None
-        ~addr_tuple ~network ~range:None ~options:[]
+        ~addr_tuple:(ip_address, mac) ~network ~range ~options
     in
     let stack = S.connect net eth arp ip icmp udp tcp dhcp_config in
     let stub_t =
