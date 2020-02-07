@@ -30,7 +30,9 @@ let dnsvizor =
       package "nocrypto";
       package "ethernet";
       package "arp-mirage";
-      package ~sublibs:["ipv4"; "tcp"; "udp"; "icmpv4"] "tcpip"
+      package ~sublibs:["ipv4"; "tcp"; "udp"; "icmpv4"] "tcpip";
+      package "charrua";
+      package "charrua-server";
     ]
   in
   foreign
