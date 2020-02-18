@@ -119,7 +119,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
 
   module Stub = Dns_stub_mirage.Make(R)(P)(M)(S)
 
-  let start () () () () net _nocrypto =
+  let start () () () () net () =
     let network, ip_address = Key_gen.ipv4 ()
     and gateway = Key_gen.ipv4_gateway ()
     in
