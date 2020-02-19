@@ -10,9 +10,9 @@ env:
     - TESTS=false
     - DISTRO=alpine
   matrix:
-    - OCAML_VERSION=4.09 POST_INSTALL_HOOK="./ci.sh unix"
-    - OCAML_VERSION=4.09 POST_INSTALL_HOOK="./ci.sh spt"
-    - OCAML_VERSION=4.08 POST_INSTALL_HOOK="./ci.sh hvt"
-    - OCAML_VERSION=4.08 POST_INSTALL_HOOK="./ci.sh xen"
-    - OCAML_VERSION=4.07 POST_INSTALL_HOOK="./ci.sh virtio"
-    - OCAML_VERSION=4.07 POST_INSTALL_HOOK="./ci.sh qubes"
+    - OCAML_VERSION=4.09 POST_INSTALL_HOOK="make ci MODE=unix"
+    - OCAML_VERSION=4.09 POST_INSTALL_HOOK="make ci MODE=spt"
+    - OCAML_VERSION=4.08 POST_INSTALL_HOOK="make ci MODE=hvt"
+    - OCAML_VERSION=4.08 POST_INSTALL_HOOK="make ci MODE=xen"
+    - OCAML_VERSION=4.07 POST_INSTALL_HOOK="make ci MODE=virtio"
+    - OCAML_VERSION=4.07 POST_INSTALL_HOOK="make ci MODE=qubes"

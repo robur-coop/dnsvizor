@@ -4,7 +4,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
 
   module Stub = Dns_stub_mirage.Make(R)(P)(M)(S)
 
-  let start _rng _pclock _mclock _time s_v4 _nocrypto =
+  let start () () () () s_v4 () =
     let stub_t =
       let nameserver = Key_gen.dns_upstream ()
       and primary_t =
