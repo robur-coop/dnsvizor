@@ -4,7 +4,7 @@ open Mirage
 
 let upstream_resolver =
   let doc = Key.Arg.info ~doc:"Upstream DNS resolver IP" ["dns-upstream"] in
-  Key.(create "dns-upstream" Arg.(opt (some ipv4_address) None doc))
+  Key.(create "dns-upstream" Arg.(opt (some ip_address) None doc))
 
 let dnsvizor =
   let pin = "git+https://github.com/mirage/ocaml-dns.git" in
@@ -19,18 +19,16 @@ let dnsvizor =
       package ~pin "dns-resolver";
       package ~pin "dns-tsig";
       package ~pin "dns-server";
-      package "nocrypto";
     ]
   in
   foreign
     ~keys:[Key.abstract upstream_resolver]
-    ~deps:[abstract nocrypto] (* initialize rng *)
     ~packages
     "Unikernel.Main"
-    (random @-> pclock @-> mclock @-> time @-> stackv4 @-> job)
+    (random @-> pclock @-> mclock @-> time @-> stackv4v6 @-> job)
 
 let () =
   register "dnsvizor" [
     dnsvizor $ default_random $ default_posix_clock
     $ default_monotonic_clock $ default_time
-    $ generic_stackv4 default_network ]
+    $ generic_stackv4v6 default_network ]
