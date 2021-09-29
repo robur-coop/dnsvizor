@@ -26,7 +26,7 @@ let dhcp_end =
 
 let upstream_resolver =
   let doc = Key.Arg.info ~doc:"Upstream DNS resolver IP" ["dns-upstream"] in
-  Key.(create "dns-upstream" Arg.(opt (some ipv4_address) None doc))
+  Key.(create "dns-upstream" Arg.(opt (some ip_address) None doc))
 
 let dnsvizor =
   let pin = "git+https://github.com/mirage/ocaml-dns.git" in
@@ -41,7 +41,6 @@ let dnsvizor =
       package ~pin "dns-resolver";
       package ~pin "dns-tsig";
       package ~pin "dns-server";
-      package "nocrypto";
       package "ethernet";
       package "arp-mirage";
       package ~sublibs:["ipv4"; "tcp"; "udp"; "icmpv4"] "tcpip";
@@ -53,7 +52,6 @@ let dnsvizor =
     ~keys:[Key.abstract ipv4; Key.abstract ipv4_gateway;
            Key.abstract dhcp_start; Key.abstract dhcp_end;
            Key.abstract upstream_resolver]
-    ~deps:[abstract nocrypto] (* initialize rng *)
     ~packages
     "Unikernel.Main"
     (random @-> pclock @-> mclock @-> time @-> network @-> job)
