@@ -2,13 +2,19 @@
 
 open Mirage
 
-let ipv4 =
-  let doc = Key.Arg.info ~doc:"IPv4 address" ["ipv4"] in
-  Key.(create "ipv4" Arg.(required ipv4 doc))
+let ipv4 = Key.V4.network Ipaddr.V4.Prefix.loopback
 
-let ipv4_gateway =
-  let doc = Key.Arg.info ~doc:"IPv4 gateway" ["ipv4-gateway"] in
-  Key.(create "ipv4-gateway" Arg.(required ipv4_address doc))
+let ipv4_gateway = Key.V4.gateway None
+
+let ipv4_only = Key.ipv4_only ()
+
+let ipv6 = Key.V6.network None
+
+let ipv6_gateway = Key.V6.gateway None
+
+let ipv6_only = Key.ipv6_only ()
+
+let accept_router_advertisements = Key.V6.accept_router_advertisements ()
 
 let dhcp_start =
   let doc =
@@ -29,27 +35,28 @@ let upstream_resolver =
   Key.(create "dns-upstream" Arg.(opt (some ip_address) None doc))
 
 let dnsvizor =
-  let pin = "git+https://github.com/mirage/ocaml-dns.git" in
   let packages =
     [
       package "logs" ;
       package "metrics" ;
-      package ~pin ~sublibs:["mirage"] "dns-stub";
-      package ~pin "dns";
-      package ~pin "dns-client";
-      package ~pin "dns-mirage";
-      package ~pin "dns-resolver";
-      package ~pin "dns-tsig";
-      package ~pin "dns-server";
+      package ~sublibs:["mirage"] "dns-stub";
+      package "dns";
+      package "dns-client";
+      package "dns-mirage";
+      package "dns-resolver";
+      package "dns-tsig";
+      package "dns-server";
       package "ethernet";
-      package "arp-mirage";
-      package ~sublibs:["ipv4"; "tcp"; "udp"; "icmpv4"] "tcpip";
+      package ~sublibs:["mirage"] "arp";
+      package ~sublibs:["ipv4"; "tcp"; "udp"; "icmpv4"; "stack-direct"; "ipv6"] "tcpip";
       package "charrua";
       package "charrua-server";
     ]
   in
   foreign
-    ~keys:[Key.abstract ipv4; Key.abstract ipv4_gateway;
+    ~keys:[Key.abstract ipv4; Key.abstract ipv4_gateway; Key.abstract ipv4_only;
+           Key.abstract ipv6; Key.abstract ipv6_gateway; Key.abstract ipv6_only;
+           Key.abstract accept_router_advertisements;
            Key.abstract dhcp_start; Key.abstract dhcp_end;
            Key.abstract upstream_resolver]
     ~packages
