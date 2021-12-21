@@ -50,16 +50,16 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
         | Dhcp_server.Input.Reply (reply, leases) ->
           t.dhcp_leases <- leases;
           Logs.debug (fun m -> m "Received packet %s" (Dhcp_wire.pkt_to_string pkt));
-          N.write t.net ~size:(N.mtu t.net + Ethernet_wire.sizeof_ethernet) (Dhcp_wire.pkt_into_buf reply) >|= fun _ ->
+          N.write t.net ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet) (Dhcp_wire.pkt_into_buf reply) >|= fun _ ->
           Logs.debug (fun m -> m "Sent reply packet %s" (Dhcp_wire.pkt_to_string reply))
 
     let listen t ~header_size net =
       let dhcp_or_not buf =
         let of_interest hdr =
-          let dst = hdr.Ethernet_packet.destination in
+          let dst = hdr.Ethernet.Packet.destination in
           Macaddr.compare dst (N.mac t.net) = 0 || not (Macaddr.is_unicast dst)
         in
-        match Ethernet_packet.Unmarshal.of_cstruct buf with
+        match Ethernet.Packet.of_cstruct buf with
         | Ok (eth_header, _) when
             of_interest eth_header &&
             Dhcp_wire.is_dhcp buf (Cstruct.length buf) -> handle_dhcp t buf

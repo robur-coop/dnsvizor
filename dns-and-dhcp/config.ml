@@ -66,9 +66,9 @@ let dnsvizor =
       package "dns-resolver";
       package "dns-tsig";
       package "dns-server";
-      package "ethernet";
-      package ~sublibs:["mirage"] "arp";
-      package ~sublibs:["ipv4"; "tcp"; "udp"; "icmpv4"; "stack-direct"; "ipv6"] "tcpip";
+      package ~min:"3.0.0" "ethernet";
+      package ~min:"3.0.0" ~sublibs:["mirage"] "arp";
+      package ~min:"7.0.0" ~sublibs:["ipv4"; "tcp"; "udp"; "icmpv4"; "stack-direct"; "ipv6"] "tcpip";
       package "charrua";
       package "charrua-server";
       package "ca-certs-nss";
