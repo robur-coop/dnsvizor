@@ -3,7 +3,7 @@ let argument_error = 64
 
 module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
     (M : Mirage_clock.MCLOCK)
-    (Time : Mirage_time.S) (S : Mirage_stack.V4V6) = struct
+    (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) = struct
 
   module Stub = Dns_stub_mirage.Make(R)(Time)(P)(M)(S)
   module Ca_certs = Ca_certs_nss.Make(P)
