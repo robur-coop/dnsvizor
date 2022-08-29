@@ -43,7 +43,7 @@ let dnsvizor =
     ]
   in
   foreign
-    ~keys:[Key.abstract dns_upstream ; Key.abstract dns_port ; Key.abstract tls_hostname ; Key.abstract tls_cert_fp ; Key.abstract tls_key_fp ; Key.abstract no_tls]
+    ~keys:[Key.v dns_upstream ; Key.v dns_port ; Key.v tls_hostname ; Key.v tls_cert_fp ; Key.v tls_key_fp ; Key.v no_tls]
     ~packages
     "Unikernel.Main"
     (random @-> pclock @-> mclock @-> time @-> stackv4v6 @-> job)

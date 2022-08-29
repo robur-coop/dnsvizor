@@ -76,13 +76,13 @@ let dnsvizor =
     ]
   in
   foreign
-    ~keys:[Key.abstract ipv4; Key.abstract ipv4_gateway; Key.abstract ipv4_only;
-           Key.abstract ipv6; Key.abstract ipv6_gateway; Key.abstract ipv6_only;
-           Key.abstract accept_router_advertisements;
-           Key.abstract dhcp_start; Key.abstract dhcp_end;
-           Key.abstract dns_upstream; Key.abstract dns_port;
-           Key.abstract tls_hostname; Key.abstract tls_cert_fp;
-           Key.abstract tls_key_fp; Key.abstract no_tls]
+    ~keys:[Key.v ipv4; Key.v ipv4_gateway; Key.v ipv4_only;
+           Key.v ipv6; Key.v ipv6_gateway; Key.v ipv6_only;
+           Key.v accept_router_advertisements;
+           Key.v dhcp_start; Key.v dhcp_end;
+           Key.v dns_upstream; Key.v dns_port;
+           Key.v tls_hostname; Key.v tls_cert_fp;
+           Key.v tls_key_fp; Key.v no_tls]
     ~packages
     "Unikernel.Main"
     (random @-> pclock @-> mclock @-> time @-> network @-> job)
