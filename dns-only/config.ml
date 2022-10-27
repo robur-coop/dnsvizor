@@ -18,6 +18,7 @@ let dnsvizor =
       package "dns-resolver";
       package "dns-tsig";
       package "dns-server";
+      package ~min:"4.3.1" "mirage-runtime";
     ]
   in
   foreign

@@ -1,6 +1,3 @@
-
-let argument_error = 64
-
 module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
     (M : Mirage_clock.MCLOCK)
     (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) = struct
@@ -16,7 +13,12 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
         Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate Dns_trie.empty
       in
       (* setup stub forwarding state and IP listeners: *)
-      Stub.create ?nameservers primary_t s
+      try
+        Stub.create ?nameservers primary_t s
+      with
+        Invalid_argument a ->
+        Logs.err (fun m -> m "error %s" a);
+        exit Mirage_runtime.argument_error
     in
     let _ = stub_t in
 
