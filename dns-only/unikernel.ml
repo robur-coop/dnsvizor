@@ -14,7 +14,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
       in
       (* setup stub forwarding state and IP listeners: *)
       try
-        Stub.create ?nameservers primary_t s
+        Stub.create ?cache_size:(Key_gen.dns_cache ()) ?nameservers primary_t s
       with
         Invalid_argument a ->
         Logs.err (fun m -> m "error %s" a);

@@ -140,7 +140,7 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
         Option.map (fun ns -> [ ns ]) (Key_gen.dns_upstream ())
       in
       try
-        Stub.create ?nameservers primary_t stack
+        Stub.create ?cache_size:(Key_gen.dns_cache ()) ?nameservers primary_t stack
       with
         Invalid_argument a ->
         Logs.err (fun m -> m "error %s" a);

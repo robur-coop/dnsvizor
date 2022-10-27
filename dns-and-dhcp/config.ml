@@ -34,6 +34,10 @@ let dns_upstream =
   let doc = Key.Arg.info ~doc:"Upstream DNS resolver" ["dns-upstream"] in
   Key.(create "dns-upstream" Arg.(opt (some string) None doc))
 
+let dns_cache =
+  let doc = Key.Arg.info ~doc:"DNS cache size" ["dns-cache"] in
+  Key.(create "dns-cache" Arg.(opt (some int) None doc))
+
 let dnsvizor =
   let packages =
     [
@@ -59,7 +63,7 @@ let dnsvizor =
            Key.v ipv6; Key.v ipv6_gateway; Key.v ipv6_only;
            Key.v accept_router_advertisements;
            Key.v dhcp_start; Key.v dhcp_end;
-           Key.v dns_upstream]
+           Key.v dns_upstream; Key.v dns_cache]
     ~packages
     "Unikernel.Main"
     (random @-> pclock @-> mclock @-> time @-> network @-> job)
