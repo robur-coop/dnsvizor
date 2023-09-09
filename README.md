@@ -15,7 +15,7 @@ To install this unikernel from source, you need to have
 The following steps will clone this git repository and compile the unikernel:
 
 ```bash
-$ git clone https://github.com/roburio/dnsvizor.git
+$ git clone https://github.com/robur-coop/dnsvizor.git
 $ cd dns-only
 $ mirage configure -t <your-favourite-target>
 $ make depend
