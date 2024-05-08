@@ -19,7 +19,7 @@ $ git clone https://github.com/robur-coop/dnsvizor.git
 $ cd dns-only
 $ mirage configure -t <your-favourite-target>
 $ make depend
-$ mirage build
+$ make build
 ```
 
 ## Installing as binary
