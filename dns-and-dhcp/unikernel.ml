@@ -24,8 +24,8 @@ module K = struct
     let doc =
       Arg.info ~doc:"DHCP range start (defaults to .100 if ipv4 is a /24)"
       ["dhcp-start"]
-  in
-  Arg.(value & (opt (some Mirage_runtime_network.Arg.ipv4_address) None doc))
+    in
+    Arg.(value & (opt (some Mirage_runtime_network.Arg.ipv4_address) None doc))
 
   let dhcp_end =
     let doc =
