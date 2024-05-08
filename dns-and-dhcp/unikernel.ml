@@ -1,5 +1,48 @@
 open Lwt.Infix
 
+module K = struct
+  open Cmdliner
+
+  let ipv4 =
+    Mirage_runtime_network.V4.network (Ipaddr.V4.Prefix.of_string_exn "10.0.0.2/24")
+
+  let ipv4_gateway =
+    Mirage_runtime_network.V4.gateway None
+
+  let ipv4_only = Mirage_runtime_network.ipv4_only ()
+
+  let ipv6 = Mirage_runtime_network.V6.network None
+
+  let ipv6_gateway = Mirage_runtime_network.V6.gateway None
+
+  let ipv6_only = Mirage_runtime_network.ipv6_only ()
+
+  let accept_router_advertisements =
+    Mirage_runtime_network.V6.accept_router_advertisements ()
+
+  let dhcp_start =
+    let doc =
+      Arg.info ~doc:"DHCP range start (defaults to .100 if ipv4 is a /24)"
+      ["dhcp-start"]
+  in
+  Arg.(value & (opt (some Mirage_runtime_network.Arg.ipv4_address) None doc))
+
+  let dhcp_end =
+    let doc =
+      Arg.info ~doc:"DHCP range end (defaults to .254 if ipv4 is a /24)"
+        ["dhcp-end"]
+    in
+    Arg.(value & Arg.(opt (some Mirage_runtime_network.Arg.ipv4_address) None doc))
+
+  let dns_upstream =
+    let doc = Arg.info ~doc:"Upstream DNS resolver" ["dns-upstream"] in
+    Arg.(value & (opt (some string) None doc))
+
+  let dns_cache =
+    let doc = Arg.info ~doc:"DNS cache size" ["dns-cache"] in
+    Arg.(value & (opt (some int) None doc))
+end
+
 module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
     (M : Mirage_clock.MCLOCK)
     (Time : Mirage_time.S) (N : Mirage_net.S) = struct
@@ -94,22 +137,26 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
 
   module Stub = Dns_stub_mirage.Make(R)(Time)(P)(M)(S)
 
-  let start () () () () net =
-    let v4_address = Ipaddr.V4.Prefix.address (Key_gen.ipv4 ()) in
+  let start () () () () net
+      ipv4 ipv4_gateway ipv4_only
+      ipv6 ipv6_gateway ipv6_only accept_router_advertisements
+      dhcp_start dhcp_end
+      dns_upstream cache_size =
+    let v4_address = Ipaddr.V4.Prefix.address ipv4 in
     let mac = N.mac net in
     let dhcp_config =
       let options =
-        (match Key_gen.ipv4_gateway () with None -> [] | Some x -> [ Dhcp_wire.Routers [ x ]]) @
+        (match ipv4_gateway with None -> [] | Some x -> [ Dhcp_wire.Routers [ x ]]) @
         [ Dhcp_wire.Dns_servers [ v4_address ] ]
         (* Dhcp_wire.Domain_name __ *)
       in
       let range =
         (* assumes network being /24; also doesn't check start < stop *)
         let ip = Ipaddr.V4.to_int32 v4_address in
-        let start = match Key_gen.dhcp_start () with
+        let start = match dhcp_start with
           | Some i -> i
           | None -> Ipaddr.V4.of_int32 (Int32.(logand 0xffffff64l (logor 0x00000064l ip)))
-        and stop = match Key_gen.dhcp_end () with
+        and stop = match dhcp_end with
           | Some i -> i
           | None -> Ipaddr.V4.of_int32 (Int32.(logand 0xfffffffel (logor 0x000000fel ip)))
         in
@@ -117,15 +164,15 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
       in
       Dhcp_server.Config.make
         ?hostname:None ?default_lease_time:None ?max_lease_time:None ?hosts:None
-        ~addr_tuple:(v4_address, mac) ~network:(Ipaddr.V4.Prefix.prefix (Key_gen.ipv4 ())) ~range ~options ()
+        ~addr_tuple:(v4_address, mac) ~network:(Ipaddr.V4.Prefix.prefix ipv4) ~range ~options ()
     in
     let net = Net.connect net dhcp_config in
     ETH.connect net >>= fun eth ->
     ARP.connect eth >>= fun arp ->
     ARP.add_ip arp v4_address >>= fun () ->
-    IPV4.connect ~no_init:(Key_gen.ipv6_only ()) ~cidr:(Key_gen.ipv4 ()) ?gateway:(Key_gen.ipv4_gateway ()) eth arp >>= fun ipv4 ->
-    IPV6.connect ~no_init:(Key_gen.ipv4_only ()) ~handle_ra:(Key_gen.accept_router_advertisements ()) ?cidr:(Key_gen.ipv6 ()) ?gateway:(Key_gen.ipv6_gateway ()) net eth >>= fun ipv6 ->
-    IPV4V6.connect ~ipv4_only:(Key_gen.ipv4_only ()) ~ipv6_only:(Key_gen.ipv6_only ()) ipv4 ipv6 >>= fun ip ->
+    IPV4.connect ~no_init:ipv6_only ~cidr:ipv4 ?gateway:ipv4_gateway eth arp >>= fun ipv4 ->
+    IPV6.connect ~no_init:ipv4_only ~handle_ra:accept_router_advertisements ?cidr:ipv6 ?gateway:ipv6_gateway net eth >>= fun ipv6 ->
+    IPV4V6.connect ~ipv4_only ~ipv6_only ipv4 ipv6 >>= fun ip ->
     ICMP.connect ipv4 >>= fun icmp ->
     UDP.connect ip >>= fun udp ->
     TCP.connect ip >>= fun tcp ->
@@ -137,10 +184,10 @@ module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
       in
       (* setup stub forwarding state and IP listeners: *)
       let nameservers =
-        Option.map (fun ns -> [ ns ]) (Key_gen.dns_upstream ())
+        Option.map (fun ns -> [ ns ]) dns_upstream
       in
       try
-        Stub.create ?cache_size:(Key_gen.dns_cache ()) ?nameservers primary_t stack
+        Stub.create ?cache_size ?nameservers primary_t stack
       with
         Invalid_argument a ->
         Logs.err (fun m -> m "error %s" a);
