@@ -9,7 +9,7 @@ module K = struct
     Arg.(value & (opt (some int) None doc))
 end
 
-module Main (R : Mirage_random.S) (P : Mirage_clock.PCLOCK)
+module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK)
     (M : Mirage_clock.MCLOCK)
     (Time : Mirage_time.S) (S : Tcpip.Stack.V4V6) = struct
 
