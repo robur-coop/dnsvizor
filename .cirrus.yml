@@ -4,7 +4,7 @@ freebsd_instance:
 freebsd_dns_only_task:
   pkg_install_script: pkg install -y ocaml-opam gmake bash
   ocaml_script: opam init -a --comp=4.14.2
-  mirage_script: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>=4.5.0"
+  mirage_script: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>=4.7.0"
   configure_script: eval `opam env` && cd dns-only && mirage configure -t hvt
   depend_script: eval `opam env` && cd dns-only && gmake depend
   build_script: eval `opam env` && cd dns-only && gmake build
@@ -14,7 +14,7 @@ freebsd_dns_only_task:
 freebsd_dns_and_dhcp_task:
   pkg_install_script: pkg install -y ocaml-opam gmake bash
   ocaml_script: opam init -a --comp=4.14.2
-  mirage_script: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>=4.5.0"
+  mirage_script: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>=4.7.0"
   configure_script: eval `opam env` && cd dns-and-dhcp && mirage configure -t hvt
   depend_script: eval `opam env` && cd dns-and-dhcp && gmake depend
   build_script: eval `opam env` && cd dns-and-dhcp && gmake build
