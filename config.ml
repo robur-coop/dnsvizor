@@ -8,11 +8,11 @@ let dnsvizor =
   let packages = [
     package "logs" ;
     package "metrics" ;
-    package ~min:"6.4.0" ~sublibs:["mirage"] "dns-stub";
     package "dns";
     package "dns-client";
     package "dns-mirage";
-    package "dns-resolver";
+    package ~sublibs:["mirage"] "dns-resolver";
+    package ~sublibs:["mirage"] "dns-stub";
     package "dns-tsig";
     package "dns-server";
     package ~min:"3.0.0" "ethernet";
@@ -32,7 +32,7 @@ let dnsvizor =
     runtime_arg ~pos:__POS__ "Unikernel.K.accept_router_advertisements";
     runtime_arg ~pos:__POS__ "Unikernel.K.dhcp_start";
     runtime_arg ~pos:__POS__ "Unikernel.K.dhcp_end";
-    runtime_arg ~pos:__POS__ "Unikernel.K.dns_upstream" ;
+    runtime_arg ~pos:__POS__ "Unikernel.K.dns_upstream";
     runtime_arg ~pos:__POS__ "Unikernel.K.dns_cache" ;
   ] in
   main

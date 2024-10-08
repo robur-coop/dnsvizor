@@ -34,13 +34,15 @@ module K = struct
     in
     Arg.(value & Arg.(opt (some Mirage_runtime_network.Arg.ipv4_address) None doc))
 
-  let dns_upstream =
-    let doc = Arg.info ~doc:"Upstream DNS resolver" ["dns-upstream"] in
-    Arg.(value & (opt (some string) None doc))
-
   let dns_cache =
     let doc = Arg.info ~doc:"DNS cache size" ["dns-cache"] in
     Arg.(value & (opt (some int) None doc))
+
+  let dns_upstream =
+    let doc = Arg.info ~doc:"Upstream DNS resolver (if specified, a stub resolver is used instead of a recursive)"
+        ["dns-upstream"]
+    in
+    Arg.(value & (opt (some string) None doc))
 end
 
 module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK)
@@ -135,6 +137,7 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK)
 
   module S = Tcpip_stack_direct.MakeV4V6(Time)(R)(Net)(ETH)(ARP)(IPV4V6)(ICMP)(UDP)(TCP)
 
+  module Resolver = Dns_resolver_mirage.Make(R)(P)(M)(Time)(S)
   module Stub = Dns_stub_mirage.Make(R)(Time)(P)(M)(S)
 
   let start () () () () net
@@ -177,22 +180,24 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK)
     UDP.connect ip >>= fun udp ->
     TCP.connect ip >>= fun tcp ->
     S.connect net eth arp ip icmp udp tcp >>= fun stack ->
-    let stub_t =
-      let primary_t =
-        (* setup DNS server state: *)
-        Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate Dns_trie.empty
-      in
-      (* setup stub forwarding state and IP listeners: *)
-      let nameservers =
-        Option.map (fun ns -> [ ns ]) dns_upstream
-      in
-      try
-        Stub.create ?cache_size ?nameservers primary_t stack
-      with
-        Invalid_argument a ->
-        Logs.err (fun m -> m "error %s" a);
-        exit Mirage_runtime.argument_error
+    let primary_t =
+      (* setup DNS server state: *)
+      Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate Dns_trie.empty
     in
-    let _ = stub_t in
+    (match dns_upstream with
+     | None ->
+       Logs.info (fun m -> m "using a recursive resolver");
+       let resolver = Dns_resolver.create ?cache_size ~dnssec:false (M.elapsed_ns ()) R.generate primary_t in
+       Resolver.resolver stack ~root:true resolver;
+       Lwt.return_unit
+     | Some ns ->
+       Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
+       Stub.H.connect_device stack >>= fun happy_eyeballs ->
+       try
+         Stub.create ?cache_size ~nameservers:[ns] primary_t ~happy_eyeballs stack >|= fun _ -> ()
+       with
+         Invalid_argument a ->
+         Logs.err (fun m -> m "error %s" a);
+         exit Mirage_runtime.argument_error) >>= fun () ->
     S.listen stack
 end
