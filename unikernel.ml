@@ -4,45 +4,53 @@ module K = struct
   open Cmdliner
 
   let ipv4 =
-    Mirage_runtime_network.V4.network (Ipaddr.V4.Prefix.of_string_exn "10.0.0.2/24")
+    Mirage_runtime.register_arg
+      (Mirage_runtime_network.V4.network (Ipaddr.V4.Prefix.of_string_exn "10.0.0.2/24"))
 
   let ipv4_gateway =
-    Mirage_runtime_network.V4.gateway None
+    Mirage_runtime.register_arg (Mirage_runtime_network.V4.gateway None)
 
-  let ipv4_only = Mirage_runtime_network.ipv4_only ()
+  let ipv4_only =
+    Mirage_runtime.register_arg (Mirage_runtime_network.ipv4_only ())
 
-  let ipv6 = Mirage_runtime_network.V6.network None
+  let ipv6 =
+    Mirage_runtime.register_arg (Mirage_runtime_network.V6.network None)
 
-  let ipv6_gateway = Mirage_runtime_network.V6.gateway None
+  let ipv6_gateway =
+    Mirage_runtime.register_arg (Mirage_runtime_network.V6.gateway None)
 
-  let ipv6_only = Mirage_runtime_network.ipv6_only ()
+  let ipv6_only =
+    Mirage_runtime.register_arg (Mirage_runtime_network.ipv6_only ())
 
   let accept_router_advertisements =
-    Mirage_runtime_network.V6.accept_router_advertisements ()
+    Mirage_runtime.register_arg
+      (Mirage_runtime_network.V6.accept_router_advertisements ())
 
   let dhcp_start =
     let doc =
       Arg.info ~doc:"DHCP range start (defaults to .100 if ipv4 is a /24)"
       ["dhcp-start"]
     in
-    Arg.(value & (opt (some Mirage_runtime_network.Arg.ipv4_address) None doc))
+    Mirage_runtime.register_arg
+      Arg.(value & (opt (some Mirage_runtime_network.Arg.ipv4_address) None doc))
 
   let dhcp_end =
     let doc =
       Arg.info ~doc:"DHCP range end (defaults to .254 if ipv4 is a /24)"
         ["dhcp-end"]
     in
-    Arg.(value & Arg.(opt (some Mirage_runtime_network.Arg.ipv4_address) None doc))
+    Mirage_runtime.register_arg
+      Arg.(value & Arg.(opt (some Mirage_runtime_network.Arg.ipv4_address) None doc))
 
   let dns_cache =
     let doc = Arg.info ~doc:"DNS cache size" ["dns-cache"] in
-    Arg.(value & (opt (some int) None doc))
+    Mirage_runtime.register_arg Arg.(value & (opt (some int) None doc))
 
   let dns_upstream =
     let doc = Arg.info ~doc:"Upstream DNS resolver (if specified, a stub resolver is used instead of a recursive)"
         ["dns-upstream"]
     in
-    Arg.(value & (opt (some string) None doc))
+    Mirage_runtime.register_arg Arg.(value & (opt (some string) None doc))
 end
 
 module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK)
@@ -140,26 +148,22 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK)
   module Resolver = Dns_resolver_mirage.Make(R)(P)(M)(Time)(S)
   module Stub = Dns_stub_mirage.Make(R)(Time)(P)(M)(S)
 
-  let start () () () () net
-      ipv4 ipv4_gateway ipv4_only
-      ipv6 ipv6_gateway ipv6_only accept_router_advertisements
-      dhcp_start dhcp_end
-      dns_upstream cache_size =
-    let v4_address = Ipaddr.V4.Prefix.address ipv4 in
+  let start () () () () net =
+    let v4_address = Ipaddr.V4.Prefix.address (K.ipv4 ()) in
     let mac = N.mac net in
     let dhcp_config =
       let options =
-        (match ipv4_gateway with None -> [] | Some x -> [ Dhcp_wire.Routers [ x ]]) @
+        (match K.ipv4_gateway () with None -> [] | Some x -> [ Dhcp_wire.Routers [ x ]]) @
         [ Dhcp_wire.Dns_servers [ v4_address ] ]
         (* Dhcp_wire.Domain_name __ *)
       in
       let range =
         (* assumes network being /24; also doesn't check start < stop *)
         let ip = Ipaddr.V4.to_int32 v4_address in
-        let start = match dhcp_start with
+        let start = match K.dhcp_start () with
           | Some i -> i
           | None -> Ipaddr.V4.of_int32 (Int32.(logand 0xffffff64l (logor 0x00000064l ip)))
-        and stop = match dhcp_end with
+        and stop = match K.dhcp_end () with
           | Some i -> i
           | None -> Ipaddr.V4.of_int32 (Int32.(logand 0xfffffffel (logor 0x000000fel ip)))
         in
@@ -167,15 +171,15 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK)
       in
       Dhcp_server.Config.make
         ?hostname:None ?default_lease_time:None ?max_lease_time:None ?hosts:None
-        ~addr_tuple:(v4_address, mac) ~network:(Ipaddr.V4.Prefix.prefix ipv4) ~range ~options ()
+        ~addr_tuple:(v4_address, mac) ~network:(Ipaddr.V4.Prefix.prefix (K.ipv4 ())) ~range ~options ()
     in
     let net = Net.connect net dhcp_config in
     ETH.connect net >>= fun eth ->
     ARP.connect eth >>= fun arp ->
     ARP.add_ip arp v4_address >>= fun () ->
-    IPV4.connect ~no_init:ipv6_only ~cidr:ipv4 ?gateway:ipv4_gateway eth arp >>= fun ipv4 ->
-    IPV6.connect ~no_init:ipv4_only ~handle_ra:accept_router_advertisements ?cidr:ipv6 ?gateway:ipv6_gateway net eth >>= fun ipv6 ->
-    IPV4V6.connect ~ipv4_only ~ipv6_only ipv4 ipv6 >>= fun ip ->
+    IPV4.connect ~no_init:(K.ipv6_only ()) ~cidr:(K.ipv4 ()) ?gateway:(K.ipv4_gateway ()) eth arp >>= fun ipv4 ->
+    IPV6.connect ~no_init:(K.ipv4_only ()) ~handle_ra:(K.accept_router_advertisements ()) ?cidr:(K.ipv6 ()) ?gateway:(K.ipv6_gateway ()) net eth >>= fun ipv6 ->
+    IPV4V6.connect ~ipv4_only:(K.ipv4_only ()) ~ipv6_only:(K.ipv6_only ()) ipv4 ipv6 >>= fun ip ->
     ICMP.connect ipv4 >>= fun icmp ->
     UDP.connect ip >>= fun udp ->
     TCP.connect ip >>= fun tcp ->
@@ -184,17 +188,17 @@ module Main (R : Mirage_crypto_rng_mirage.S) (P : Mirage_clock.PCLOCK)
       (* setup DNS server state: *)
       Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate Dns_trie.empty
     in
-    (match dns_upstream with
+    (match K.dns_upstream () with
      | None ->
        Logs.info (fun m -> m "using a recursive resolver");
-       let resolver = Dns_resolver.create ?cache_size ~dnssec:false (M.elapsed_ns ()) R.generate primary_t in
+       let resolver = Dns_resolver.create ?cache_size:(K.dns_cache ()) ~dnssec:false (M.elapsed_ns ()) R.generate primary_t in
        Resolver.resolver stack ~root:true resolver;
        Lwt.return_unit
      | Some ns ->
        Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
        Stub.H.connect_device stack >>= fun happy_eyeballs ->
        try
-         Stub.create ?cache_size ~nameservers:[ns] primary_t ~happy_eyeballs stack >|= fun _ -> ()
+         Stub.create ?cache_size:(K.dns_cache ()) ~nameservers:[ns] primary_t ~happy_eyeballs stack >|= fun _ -> ()
        with
          Invalid_argument a ->
          Logs.err (fun m -> m "error %s" a);
