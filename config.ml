@@ -1,4 +1,4 @@
-(* mirage >= 4.7.0 & < 4.8.0 *)
+(* mirage >= 4.8.0 & < 4.9.0 *)
 
 (* Copyright Robur, 2020 *)
 
@@ -22,21 +22,8 @@ let dnsvizor =
     package "charrua-server";
     package ~min:"4.5.0" ~sublibs:["network"] "mirage-runtime";
   ]
-  and runtime_args = [
-    runtime_arg ~pos:__POS__ "Unikernel.K.ipv4";
-    runtime_arg ~pos:__POS__ "Unikernel.K.ipv4_gateway";
-    runtime_arg ~pos:__POS__ "Unikernel.K.ipv4_only";
-    runtime_arg ~pos:__POS__ "Unikernel.K.ipv6";
-    runtime_arg ~pos:__POS__ "Unikernel.K.ipv6_gateway";
-    runtime_arg ~pos:__POS__ "Unikernel.K.ipv6_only";
-    runtime_arg ~pos:__POS__ "Unikernel.K.accept_router_advertisements";
-    runtime_arg ~pos:__POS__ "Unikernel.K.dhcp_start";
-    runtime_arg ~pos:__POS__ "Unikernel.K.dhcp_end";
-    runtime_arg ~pos:__POS__ "Unikernel.K.dns_upstream";
-    runtime_arg ~pos:__POS__ "Unikernel.K.dns_cache" ;
-  ] in
+  in
   main
-    ~runtime_args
     ~packages
     "Unikernel.Main"
     (random @-> pclock @-> mclock @-> time @-> network @-> job)
