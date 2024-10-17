@@ -27,6 +27,11 @@ module K = struct
     Mirage_runtime.register_arg
       (Mirage_runtime_network.V6.accept_router_advertisements ())
 
+  let dhcp_range =
+    let doc = Arg.info ~doc:"Enable DHCP server." [ "dhcp-range" ] in
+    Mirage_runtime.register_arg
+      Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
+
   let dhcp_start =
     let doc =
       Arg.info ~doc:"DHCP range start (defaults to .100 if ipv4 is a /24)"
@@ -41,9 +46,7 @@ module K = struct
         [ "dhcp-end" ]
     in
     Mirage_runtime.register_arg
-      Arg.(
-        value
-        & Arg.(opt (some Mirage_runtime_network.Arg.ipv4_address) None doc))
+      Arg.(value & opt (some Mirage_runtime_network.Arg.ipv4_address) None doc)
 
   let dns_cache =
     let doc = Arg.info ~doc:"DNS cache size" [ "dns-cache" ] in
@@ -168,6 +171,10 @@ struct
   module Stub = Dns_stub_mirage.Make (R) (Time) (P) (M) (S)
 
   let start () () () () net =
+    (match K.dhcp_range () with
+    | None -> ()
+    | Some x ->
+        Logs.info (fun m -> m "dhcp-range: %a" Config_parser.pp_dhcp_range x));
     let v4_address = Ipaddr.V4.Prefix.address (K.ipv4 ()) in
     let mac = N.mac net in
     let dhcp_config =
