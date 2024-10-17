@@ -173,4 +173,5 @@ let dhcp_range =
    #dhcp-range=1234::, ra-stateless, ra-names
 *)
 
-let dhcp_range_c = conv_cmdliner dhcp_range pp_dhcp_range
+let dhcp_range_c =
+  conv_cmdliner ~docv:"<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]" dhcp_range pp_dhcp_range
