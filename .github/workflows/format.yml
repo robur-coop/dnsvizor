@@ -30,7 +30,7 @@ jobs:
 
       - name: Format code
         run: |
-          find . -name \*\.ml -maxdepth 1 | xargs opam exec -- ocamlformat --inplace
+          git ls-files '*.ml' '*.mli' | xargs opam exec -- ocamlformat --inplace
 
       - name: Check for modified files
         id: git-check
@@ -39,8 +39,8 @@ jobs:
       - name: Commit and push changes
         if: steps.git-check.outputs.modified == 'true'
         run: |
-          git config --global user.name "Auto-OCamlformat"
-          git config --global user.email "auto@ocaml.format"
+          git config --global user.name "Automated ocamlformat GitHub action, developed by robur.coop"
+          git config --global user.email "autoformat@robur.coop"
           git add -A
           git commit -m "formatted code"
           git push
