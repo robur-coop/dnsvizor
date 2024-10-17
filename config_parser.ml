@@ -174,4 +174,6 @@ let dhcp_range =
 *)
 
 let dhcp_range_c =
-  conv_cmdliner ~docv:"<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]" dhcp_range pp_dhcp_range
+  conv_cmdliner
+    ~docv:"<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
+    dhcp_range pp_dhcp_range
