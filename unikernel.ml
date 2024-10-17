@@ -83,9 +83,7 @@ struct
           Lwt.return_unit
       | Ok pkt -> (
           let now = M.elapsed_ns () |> Duration.to_sec |> Int32.of_int in
-          match
-            Dhcp_server.Input.input_pkt config t.dhcp_leases pkt now
-          with
+          match Dhcp_server.Input.input_pkt config t.dhcp_leases pkt now with
           | Dhcp_server.Input.Silence -> Lwt.return_unit
           | Dhcp_server.Input.Update leases ->
               t.dhcp_leases <- leases;
@@ -118,13 +116,13 @@ struct
         in
         match t.dhcp_config with
         | None -> net buf
-        | Some config ->
-          match Ethernet.Packet.of_cstruct buf with
-          | Ok (eth_header, _)
-            when of_interest eth_header
-              && Dhcp_wire.is_dhcp buf (Cstruct.length buf) ->
-            handle_dhcp t config buf
-          | _ -> net buf
+        | Some config -> (
+            match Ethernet.Packet.of_cstruct buf with
+            | Ok (eth_header, _)
+              when of_interest eth_header
+                   && Dhcp_wire.is_dhcp buf (Cstruct.length buf) ->
+                handle_dhcp t config buf
+            | _ -> net buf)
       in
       N.listen t.net ~header_size dhcp_or_not
 
@@ -169,32 +167,35 @@ struct
       match K.dhcp_range () with
       | None -> None
       | Some dhcp_range ->
-        let options =
-          (match K.ipv4_gateway () with
-           | None -> []
-           | Some x -> [ Dhcp_wire.Routers [ x ] ])
-          @ [ Dhcp_wire.Dns_servers [ v4_address ] ]
-          (* Dhcp_wire.Domain_name __ *)
-        in
-        let range =
-          (* doesn't check start < stop *)
-          let start = dhcp_range.Config_parser.start_addr in
-          let stop =
-            (* TODO assumes /24 also automatically fills stuff *)
-            match dhcp_range.end_addr with
-            | Some i -> i
-            | None ->
-              Ipaddr.V4.of_int32
-                Int32.(logand 0xfffffffel (logor 0x000000fel (Ipaddr.V4.to_int32 start)))
+          let options =
+            (match K.ipv4_gateway () with
+            | None -> []
+            | Some x -> [ Dhcp_wire.Routers [ x ] ])
+            @ [ Dhcp_wire.Dns_servers [ v4_address ] ]
+            (* Dhcp_wire.Domain_name __ *)
           in
-          Some (start, stop)
-        in
-        let default_lease_time = dhcp_range.lease_time in
-        (* TODO: what should be the max_lease_time? 2 * default_lease_time *)
-        Some (Dhcp_server.Config.make ?hostname:None ?default_lease_time
-                ?max_lease_time:None ?hosts:None ~addr_tuple:(v4_address, mac)
-                ~network:(Ipaddr.V4.Prefix.prefix (K.ipv4 ()))
-                ~range ~options ())
+          let range =
+            (* doesn't check start < stop *)
+            let start = dhcp_range.Config_parser.start_addr in
+            let stop =
+              (* TODO assumes /24 also automatically fills stuff *)
+              match dhcp_range.end_addr with
+              | Some i -> i
+              | None ->
+                  Ipaddr.V4.of_int32
+                    Int32.(
+                      logand 0xfffffffel
+                        (logor 0x000000fel (Ipaddr.V4.to_int32 start)))
+            in
+            Some (start, stop)
+          in
+          let default_lease_time = dhcp_range.lease_time in
+          (* TODO: what should be the max_lease_time? 2 * default_lease_time *)
+          Some
+            (Dhcp_server.Config.make ?hostname:None ?default_lease_time
+               ?max_lease_time:None ?hosts:None ~addr_tuple:(v4_address, mac)
+               ~network:(Ipaddr.V4.Prefix.prefix (K.ipv4 ()))
+               ~range ~options ())
     in
     let net = Net.connect net dhcp_config in
     ETH.connect net >>= fun eth ->
