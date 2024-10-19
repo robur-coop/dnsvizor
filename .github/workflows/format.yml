@@ -26,11 +26,10 @@ jobs:
           ocaml-compiler: ${{ matrix.ocaml-version }}
 
       - name: Install ocamlformat
-        run: grep version .ocamlformat | cut -d '=' -f 2 | xargs -I V opam install ocamlformat=V
+        run: grep ^version .ocamlformat | cut -d '=' -f 2 | xargs -I V opam install ocamlformat=V
 
       - name: Format code
-        run: |
-          git ls-files '*.ml' '*.mli' | xargs opam exec -- ocamlformat --inplace
+        run: git ls-files '*.ml' '*.mli' | xargs opam exec -- ocamlformat --inplace
 
       - name: Check for modified files
         id: git-check
