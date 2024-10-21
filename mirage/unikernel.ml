@@ -161,7 +161,7 @@ struct
     (match K.dhcp_range () with
     | None -> ()
     | Some x ->
-        Logs.info (fun m -> m "dhcp-range: %a" Config_parser.pp_dhcp_range x));
+        Logs.info (fun m -> m "dhcp-range: %a" Dnsvizor.Config_parser.pp_dhcp_range x));
     let v4_address = Ipaddr.V4.Prefix.address (K.ipv4 ()) in
     let mac = N.mac net in
     let dhcp_config =
@@ -177,7 +177,7 @@ struct
           in
           let range =
             (* doesn't check start < stop *)
-            let start = dhcp_range.Config_parser.start_addr in
+            let start = dhcp_range.Dnsvizor.Config_parser.start_addr in
             let stop =
               (* TODO assumes /24 also automatically fills stuff *)
               match dhcp_range.end_addr with
