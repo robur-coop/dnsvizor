@@ -1,0 +1,4 @@
+(test
+ (name config_tests)
+ (modules config_tests)
+ (libraries alcotest fmt logs.fmt dnsvizor))

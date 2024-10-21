@@ -5,8 +5,10 @@
 open Mirage
 
 let dnsvizor =
+  let pin = "git+file://" ^ Filename.dirname (Sys.getcwd ()) ^ "#HEAD" in
   let packages =
     [
+      package ~pin "dnsvizor";
       package "logs";
       package "metrics";
       package "dns";
