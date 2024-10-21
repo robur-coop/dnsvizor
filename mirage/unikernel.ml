@@ -2,6 +2,7 @@ open Lwt.Infix
 
 module K = struct
   open Cmdliner
+  open Dnsvizor
 
   let ipv4 =
     Mirage_runtime.register_arg
