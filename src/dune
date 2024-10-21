@@ -1,3 +1,4 @@
 (library
  (name dnsvizor)
+ (public_name dnsvizor)
  (libraries angstrom fmt ipaddr cmdliner))

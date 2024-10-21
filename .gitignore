@@ -29,18 +29,12 @@ _opam/
 *.#.*
 
 # mirage
-.mirage.config
-Makefile
-dune
-dune.build
-dune.config
-dune-project
-myocamlbuild.ml
-main.ml
-*unikernel*.opam
-key_gen.ml
-dnsvizor
-dnsvizor.hvt
-dnsvizor.spt
-dnsvizor.xen
-dnsvizor.virtio
+mirage/Makefile
+mirage/mirage
+mirage/dune
+mirage/dune.build
+mirage/dune.config
+mirage/dune-project
+mirage/dune-workspace
+mirage/duniverse
+mirage/dist
