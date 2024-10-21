@@ -33,9 +33,36 @@ let ok_dhcp_range () =
   Alcotest.(check (result dhcp_range_t string) "DHCP range is good" (Ok expected)
               (parse_one dhcp_range input))
 
+let ok_dhcp_range_with_netmask () =
+  let input = "192.168.0.50,192.168.0.150,255.255.255.0,12h" in
+  let expected = { start_addr = Ipaddr.V4.of_string_exn "192.168.0.50" ;
+                   end_addr = Some (Ipaddr.V4.of_string_exn "192.168.0.150") ;
+                   mode = None ; netmask = Some (Ipaddr.V4.of_string_exn "255.255.255.0") ; broadcast = None ;
+                   lease_time = Some (12 * 60 * 60) ;
+                 }
+  in
+  Alcotest.(check (result dhcp_range_t string) "DHCP range with netmask is good" (Ok expected)
+              (parse_one dhcp_range input))
+
+let ok_dhcp_range_static () =
+  (* NOTE: there's no netmask, with dnsmasq it comes from the configured
+     interfaces. Unclear whether we want to support this without netmask. *)
+  let input = "192.168.0.0,static" in
+  let expected = { start_addr = Ipaddr.V4.of_string_exn "192.168.0.0" ;
+                   end_addr = None ;
+                   mode = Some `Static ; netmask = None ; broadcast = None ;
+                   lease_time = None ;
+                 }
+  in
+  Alcotest.(check (result dhcp_range_t string) "DHCP range with static is good" (Ok expected)
+              (parse_one dhcp_range input))
+
+
 let tests =
   [
-    ("DHCP range 1", `Quick, ok_dhcp_range);
+    ("DHCP range", `Quick, ok_dhcp_range);
+    ("DHCP range with netmask", `Quick, ok_dhcp_range_with_netmask);
+    ("DHCP range static", `Quick, ok_dhcp_range_static);
   ]
 
 let tests = [ ("Config tests", tests) ]

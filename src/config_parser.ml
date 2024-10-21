@@ -112,18 +112,6 @@ let dhcp_range =
 (* lease time is in seconds, or minutes (45m) or hours (1h) or days (2d)
    or weeks (1w) or "infinite", default is 1h, minimum is 2m *)
 (* examples:
-   # Uncomment this to enable the integrated DHCP server, you need
-   # to supply the range of addresses available for lease and optionally
-   # a lease time. If you have more than one network, you will need to
-   # repeat this for each network on which you want to supply DHCP
-   # service.
-   #dhcp-range=192.168.0.50,192.168.0.150,12h
-
-   # This is an example of a DHCP range where the netmask is given. This
-   # is needed for networks we reach the dnsmasq DHCP server via a relay
-   # agent. If you don't know what a DHCP relay agent is, you probably
-   # don't need to worry about this.
-   #dhcp-range=192.168.0.50,192.168.0.150,255.255.255.0,12h
 
    # This is an example of a DHCP range which sets a tag, so that
    # some DHCP options may be set only for this network.
@@ -131,15 +119,6 @@ let dhcp_range =
 
    # Use this DHCP range only when the tag "green" is set.
    #dhcp-range=tag:green,192.168.0.50,192.168.0.150,12h
-
-   # Specify a subnet which can't be used for dynamic address allocation,
-   # is available for hosts with matching --dhcp-host lines. Note that
-   # dhcp-host declarations will be ignored unless there is a dhcp-range
-   # of some type for the subnet in question.
-   # In this case the netmask is implied (it comes from the network
-   # configuration on the machine running dnsmasq) it is possible to give
-   # an explicit netmask instead.
-   #dhcp-range=192.168.0.0,static
 
    # Enable DHCPv6. Note that the prefix-length does not need to be specified
    # and defaults to 64 if missing/
