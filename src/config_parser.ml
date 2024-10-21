@@ -1,5 +1,6 @@
 open Angstrom
 
+(* TODO revise the error handling, since rule may output an error *)
 let parse_one rule config_str =
   parse_string ~consume:Consume.All
     (rule
@@ -29,6 +30,7 @@ let week = 7 * day
 let infinite = 1 lsl 32 (* DHCP has 32 bits for this *)
 
 let lease_time =
+  (* TODO check that the time fits into 32 bits *)
   take_while1 (function '0' .. '9' -> true | _ -> false)
   >>= (fun dur ->
         match int_of_string_opt dur with
@@ -109,48 +111,6 @@ let dhcp_range =
   in
   let netmask, broadcast = net_broad in
   { start_addr; end_addr; mode; netmask; broadcast; lease_time }
-(* lease time is in seconds, or minutes (45m) or hours (1h) or days (2d)
-   or weeks (1w) or "infinite", default is 1h, minimum is 2m *)
-(* examples:
-
-   # This is an example of a DHCP range which sets a tag, so that
-   # some DHCP options may be set only for this network.
-   #dhcp-range=set:red,192.168.0.50,192.168.0.150
-
-   # Use this DHCP range only when the tag "green" is set.
-   #dhcp-range=tag:green,192.168.0.50,192.168.0.150,12h
-
-   # Enable DHCPv6. Note that the prefix-length does not need to be specified
-   # and defaults to 64 if missing/
-   #dhcp-range=1234::2, 1234::500, 64, 12h
-
-   # Do Router Advertisements, BUT NOT DHCP for this subnet.
-   #dhcp-range=1234::, ra-only
-
-   # Do Router Advertisements, BUT NOT DHCP for this subnet, also try and
-   # add names to the DNS for the IPv6 address of SLAAC-configured dual-stack
-   # hosts. Use the DHCPv4 lease to derive the name, network segment and
-   # MAC address and assume that the host will also have an
-   # IPv6 address calculated using the SLAAC algorithm.
-   #dhcp-range=1234::, ra-names
-
-   # Do Router Advertisements, BUT NOT DHCP for this subnet.
-   # Set the lifetime to 46 hours. (Note: minimum lifetime is 2 hours.)
-   #dhcp-range=1234::, ra-only, 48h
-
-   # Do DHCP and Router Advertisements for this subnet. Set the A bit in the RA
-   # so that clients can use SLAAC addresses as well as DHCP ones.
-   #dhcp-range=1234::2, 1234::500, slaac
-
-   # Do Router Advertisements and stateless DHCP for this subnet. Clients will
-   # not get addresses from DHCP, but they will get other configuration information.
-   # They will use SLAAC for addresses.
-   #dhcp-range=1234::, ra-stateless
-
-   # Do stateless DHCP, SLAAC, and generate DNS names for SLAAC addresses
-   # from DHCPv4 leases.
-   #dhcp-range=1234::, ra-stateless, ra-names
-*)
 
 let dhcp_range_c =
   conv_cmdliner
