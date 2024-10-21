@@ -5,7 +5,7 @@
 open Mirage
 
 let dnsvizor =
-  let pin = "git+https://github.com/robur-coop/dnsvizor.git" in
+  let pin = "git+https://github.com/robur-coop/dnsvizor.git#conf_parser" in
   let packages =
     [
       package ~pin "dnsvizor";
