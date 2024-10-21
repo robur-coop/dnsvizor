@@ -7,7 +7,6 @@ freebsd_task:
   mirage_script: eval `opam env` && opam install --confirm-level=unsafe-yes "mirage>=4.8.0"
   configure_script: eval `opam env` && cd mirage && mirage configure -t hvt
   depend_script: eval `opam env` && cd mirage && gmake depend
-  copy_script: rm -rf mirage/duniverse/dnsvizor/* && cp -R dune-project dnsvizor.opam src mirage/duniverse/dnsvizor/
   build_script: eval `opam env` && cd mirage && gmake build
   client_artifacts:
     path: mirage/dist/dnsvizor.hvt
