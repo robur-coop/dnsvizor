@@ -28,12 +28,6 @@ module K = struct
     Mirage_runtime.register_arg
       (Mirage_runtime_network.V6.accept_router_advertisements ())
 
-  (* TODO support multiple dhcp-range statements *)
-  let dhcp_range =
-    let doc = Arg.info ~doc:"Enable DHCP server." [ "dhcp-range" ] in
-    Mirage_runtime.register_arg
-      Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
-
   let dns_cache =
     let doc = Arg.info ~doc:"DNS cache size" [ "dns-cache" ] in
     Mirage_runtime.register_arg Arg.(value & opt (some int) None doc)
@@ -47,6 +41,40 @@ module K = struct
         [ "dns-upstream" ]
     in
     Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
+
+  (* DNSmasq configuration options *)
+  (* TODO support multiple dhcp-range statements *)
+  let dhcp_range =
+    let doc = Arg.info ~doc:"Enable DHCP server." [ "dhcp-range" ] in
+    Mirage_runtime.register_arg
+      Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
+
+  let interface =
+    let doc = Arg.info ~doc:"Interface to listen on." [ "interface" ] in
+    Mirage_runtime.register_arg
+      Arg.(value & opt Config_parser.(some (ignore_c "interface")) None doc)
+
+  let extect_interface =
+    let doc =
+      Arg.info ~doc:"Interface to not listen on." [ "except-interface" ]
+    in
+    Mirage_runtime.register_arg
+      Arg.(
+        value & opt Config_parser.(some (ignore_c "except-interface")) None doc)
+
+  let listen_address =
+    let doc = Arg.info ~doc:"IP address to listen on." [ "listen-address" ] in
+    Mirage_runtime.register_arg
+      Arg.(
+        value & opt Config_parser.(some (ignore_c "listen-address")) None doc)
+
+  let no_dhcp_interface =
+    let doc =
+      Arg.info ~doc:"Only provide DNS service on." [ "no-dhcp-interface" ]
+    in
+    Mirage_runtime.register_arg
+      Arg.(
+        value & opt Config_parser.(some (ignore_c "no-dhcp-interface")) None doc)
 end
 
 module Main

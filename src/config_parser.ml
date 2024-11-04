@@ -1,5 +1,11 @@
 open Angstrom
 
+module Log =
+  (val Logs.(
+         src_log
+         @@ Src.create ~doc:"DNSvizor configuration module" "dnsvizor.config")
+      : Logs.LOG)
+
 let parse_one rule config_str =
   match parse_string ~consume:Consume.All rule config_str with
   | Ok _ as o -> o
@@ -43,6 +49,20 @@ let lease_time =
                 (Fmt.str "Value %u (from %S%s) does not fit into 32 bits" r dur
                    c))
   <|> string "infinite" *> return infinite
+
+let line =
+  take_while (function '\n' -> false | _ -> true)
+  <* (end_of_line <|> end_of_input)
+
+let ignore_line key =
+  line >>= fun txt ->
+  Log.warn (fun m -> m "ignoring %S %S" key txt);
+  return txt
+
+let pp_ignored_line key ppf data = Fmt.pf ppf "--%s=%s" key data
+
+let ignore_c key =
+  conv_cmdliner ~docv:"IGNORED" (ignore_line key) (pp_ignored_line key)
 
 (* real grammars *)
 
