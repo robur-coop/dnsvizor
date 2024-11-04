@@ -1,5 +1,9 @@
 open Dnsvizor.Config_parser
 
+let msg_t =
+  let pp ppf (`Msg s) = Fmt.string ppf s in
+  Alcotest.testable pp (fun (`Msg a) (`Msg b) -> String.equal a b)
+
 let opt_eq f a b =
   match (a, b) with
   | None, None -> true
@@ -38,7 +42,7 @@ let ok_dhcp_range () =
   in
   Alcotest.(
     check
-      (result dhcp_range_t string)
+      (result dhcp_range_t msg_t)
       "DHCP range is good" (Ok expected)
       (parse_one dhcp_range input))
 
@@ -56,7 +60,7 @@ let ok_dhcp_range_with_netmask () =
   in
   Alcotest.(
     check
-      (result dhcp_range_t string)
+      (result dhcp_range_t msg_t)
       "DHCP range with netmask is good" (Ok expected)
       (parse_one dhcp_range input))
 
@@ -76,7 +80,7 @@ let ok_dhcp_range_static () =
   in
   Alcotest.(
     check
-      (result dhcp_range_t string)
+      (result dhcp_range_t msg_t)
       "DHCP range with static is good" (Ok expected)
       (parse_one dhcp_range input))
 

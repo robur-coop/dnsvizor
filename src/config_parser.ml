@@ -1,18 +1,11 @@
 open Angstrom
 
-(* TODO revise the error handling, since rule may output an error *)
 let parse_one rule config_str =
-  parse_string ~consume:Consume.All
-    (rule
-    <|> ( available >>| min 100 >>= peek_string >>= fun context ->
-          pos >>= fun pos ->
-          fail (Printf.sprintf "Error at byte offset %d: %S" pos context) ))
-    config_str
+  match parse_string ~consume:Consume.All rule config_str with
+  | Ok _ as o -> o
+  | Error msg -> Error (`Msg (Fmt.str "Parse error in %S: %s" config_str msg))
 
-let lift_err = function Ok _ as o -> o | Error e -> Error (`Msg e)
-
-let conv_cmdliner ?docv rule pp =
-  Cmdliner.Arg.conv ?docv ((fun x -> parse_one rule x |> lift_err), pp)
+let conv_cmdliner ?docv rule pp = Cmdliner.Arg.conv ?docv (parse_one rule, pp)
 
 (* some basic rules *)
 
@@ -30,20 +23,25 @@ let week = 7 * day
 let infinite = 1 lsl 32 (* DHCP has 32 bits for this *)
 
 let lease_time =
-  (* TODO check that the time fits into 32 bits *)
   take_while1 (function '0' .. '9' -> true | _ -> false)
   >>= (fun dur ->
         match int_of_string_opt dur with
         | None -> fail (Fmt.str "Couldn't convert %S to an integer" dur)
-        | Some dur ->
+        | Some n ->
             choice
               [
-                string "w" *> return (dur * week);
-                string "d" *> return (dur * day);
-                string "h" *> return (dur * hour);
-                string "m" *> return (dur * minute);
-                end_of_input *> return dur;
-              ])
+                string "w" *> return ("w", n * week);
+                string "d" *> return ("d", n * day);
+                string "h" *> return ("h", n * hour);
+                string "m" *> return ("m", n * minute);
+                end_of_input *> return ("", n);
+              ]
+            >>= fun (c, r) ->
+            if r > 0 && r < infinite then return r
+            else
+              fail
+                (Fmt.str "Value %u (from %S%s) does not fit into 32 bits" r dur
+                   c))
   <|> string "infinite" *> return infinite
 
 (* real grammars *)
