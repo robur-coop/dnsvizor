@@ -28,3 +28,4 @@ depends: [
   "alcotest" {with-test & >= "1.8.0"}
   "logs" {with-test & >= "0.7.0"}
 ]
+available: arch != "arm32" & arch != "x86_32"
