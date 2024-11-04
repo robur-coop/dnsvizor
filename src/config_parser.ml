@@ -121,7 +121,8 @@ let dhcp_range =
       >>| fun broadcast -> (netmask, broadcast) )
   >>= fun net_broad ->
   option None (string "," *> lease_time >>| fun l -> Some l)
-  >>| fun lease_time ->
+  >>= fun lease_time ->
+  end_of_line <|> end_of_input >>| fun () ->
   let end_addr, mode =
     match mode_or_end with
     | `Mode m -> (None, Some m)
@@ -134,3 +135,31 @@ let dhcp_range_c =
   conv_cmdliner
     ~docv:"<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
     dhcp_range pp_dhcp_range
+
+let parse_file data =
+  let rules =
+    let ignore_line key =
+      string (key ^ "=") *> ignore_line key >>| fun _ -> `Ignored
+    in
+    let ignore_flag key =
+      string key *> (end_of_line <|> end_of_input) >>| fun _ -> `Ignored
+    in
+    choice
+      [
+        (string "dhcp-range=" *> dhcp_range >>| fun range -> `Dhcp_range range);
+        ignore_line "interface";
+        ignore_line "except-interface";
+        ignore_line "listen-address";
+        ignore_line "no-dhcp-interface";
+        ignore_flag "bind-interfaces";
+        (string "#" *> ignore_line "#" >>| fun _ -> `Ignored);
+      ]
+  in
+  let top =
+    fix (fun r ->
+        rules >>= fun e ->
+        commit *> end_of_input *> return [ e ] <|> (List.cons e <$> r))
+  in
+  match parse_string ~consume:Consume.All top data with
+  | Ok x -> Ok (List.filter (function `Ignored -> false | _ -> true) x)
+  | Error msg -> Error (`Msg msg)

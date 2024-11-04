@@ -54,7 +54,7 @@ module K = struct
     Mirage_runtime.register_arg
       Arg.(value & opt Config_parser.(some (ignore_c "interface")) None doc)
 
-  let extect_interface =
+  let except_interface =
     let doc =
       Arg.info ~doc:"Interface to not listen on." [ "except-interface" ]
     in
@@ -75,6 +75,12 @@ module K = struct
     Mirage_runtime.register_arg
       Arg.(
         value & opt Config_parser.(some (ignore_c "no-dhcp-interface")) None doc)
+
+  let bind_interfaces =
+    let doc =
+      Arg.info ~doc:"Bind to interface IP address only." [ "bind_interfaces" ]
+    in
+    Mirage_runtime.register_arg Arg.(value & flag doc)
 end
 
 module Main

@@ -91,7 +91,29 @@ let tests =
     ("DHCP range static", `Quick, ok_dhcp_range_static);
   ]
 
-let tests = [ ("Config tests", tests) ]
+let string_of_file filename =
+  let config_dir = "sample-configuration-files" in
+  let file = Filename.concat config_dir filename in
+  try
+    let fh = open_in file in
+    let content = really_input_string fh (in_channel_length fh) in
+    close_in_noerr fh;
+    content
+  with _ -> Alcotest.failf "Error reading file %S" file
+
+let test_configuration config file () =
+  match parse_file (string_of_file file) with
+  | Error (`Msg msg) -> Alcotest.failf "Error parsing %S: %s" file msg
+  | Ok data ->
+      Alcotest.(check int)
+        "Number of configuration items matches" (List.length config)
+        (List.length data)
+
+let config_file_tests =
+  [ ("First example", `Quick, test_configuration [] "simple.conf") ]
+
+let tests =
+  [ ("Config tests", tests); ("Configuration file tests", config_file_tests) ]
 
 let () =
   Logs.set_reporter @@ Logs_fmt.reporter ~dst:Format.std_formatter ();
