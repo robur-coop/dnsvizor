@@ -150,18 +150,18 @@ let parse_file data =
       | ' ' | '\x0c' | '\n' | '\r' | '\t' | '\x0b' -> true
       | _ -> false
     in
-    skip_while isspace *> commit *>
-    choice ~failure_msg:"bad configuration directive"
-      [
-        ( string "dhcp-range=" *> commit *> dhcp_range >>| fun range ->
-          `Dhcp_range range );
-        ignore_directive "interface";
-        ignore_directive "except-interface";
-        ignore_directive "listen-address";
-        ignore_directive "no-dhcp-interface";
-        ignore_flag "bind-interfaces";
-        (string "#" *> ignore_line "#" >>| fun _ -> `Ignored);
-      ]
+    skip_while isspace *> commit
+    *> choice ~failure_msg:"bad configuration directive"
+         [
+           ( string "dhcp-range=" *> commit *> dhcp_range >>| fun range ->
+             `Dhcp_range range );
+           ignore_directive "interface";
+           ignore_directive "except-interface";
+           ignore_directive "listen-address";
+           ignore_directive "no-dhcp-interface";
+           ignore_flag "bind-interfaces";
+           (string "#" *> ignore_line "#" >>| fun _ -> `Ignored);
+         ]
   in
   let top =
     fix (fun r ->
