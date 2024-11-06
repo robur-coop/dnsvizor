@@ -35,12 +35,13 @@ let lease_time =
         | None -> fail (Fmt.str "Couldn't convert %S to an integer" dur)
         | Some n ->
             choice
+              ~failure_msg:"bad lease time"
               [
                 string "w" *> return ("w", n * week);
                 string "d" *> return ("d", n * day);
                 string "h" *> return ("h", n * hour);
                 string "m" *> return ("m", n * minute);
-                end_of_input *> return ("", n);
+                return ("", n);
               ]
             >>= fun (c, r) ->
             if r > 0 && r < infinite then return r
@@ -103,6 +104,7 @@ let pp_dhcp_range ppf
 
 let mode =
   choice [ string "static" *> return `Static; string "proxy" *> return `Proxy ]
+    ~failure_msg:"bad mode"
 
 let dhcp_range =
   (* TODO prefix: [tag:<tag>[,tag:<tag>],][set:<tag>,]
@@ -138,19 +140,20 @@ let dhcp_range_c =
 
 let parse_file data =
   let rules =
-    let ignore_line key =
-      string (key ^ "=") *> ignore_line key >>| fun _ -> `Ignored
+    let ignore_directive key =
+      string (key ^ "=") *> commit *> ignore_line key >>| fun _ -> `Ignored
     in
     let ignore_flag key =
       string key *> (end_of_line <|> end_of_input) >>| fun _ -> `Ignored
     in
     choice
+      ~failure_msg:"bad configuration directive"
       [
-        (string "dhcp-range=" *> dhcp_range >>| fun range -> `Dhcp_range range);
-        ignore_line "interface";
-        ignore_line "except-interface";
-        ignore_line "listen-address";
-        ignore_line "no-dhcp-interface";
+        (string "dhcp-range=" *> commit *> dhcp_range >>| fun range -> `Dhcp_range range);
+        ignore_directive "interface";
+        ignore_directive "except-interface";
+        ignore_directive "listen-address";
+        ignore_directive "no-dhcp-interface";
         ignore_flag "bind-interfaces";
         (string "#" *> ignore_line "#" >>| fun _ -> `Ignored);
       ]
