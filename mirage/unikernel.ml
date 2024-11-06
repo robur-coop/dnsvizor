@@ -45,22 +45,24 @@ module K = struct
   (* DNSmasq configuration options *)
   (* TODO support multiple dhcp-range statements *)
   let dhcp_range =
-    let doc = Arg.info ~doc:"Enable DHCP server." [ "dhcp-range" ] in
+    let doc =
+      Arg.info ~doc:"Enable DHCP server." ~docv:Config_parser.dhcp_range_docv
+        [ "dhcp-range" ]
+    in
     Mirage_runtime.register_arg
       Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
 
-  let ignored = "DNSMASQ COMPATIBILITY OPTIONS (IGNORED)"
-
   let interface =
     let doc =
-      Arg.info ~docs:ignored ~doc:"Interface to listen on." [ "interface" ]
+      Arg.info ~docs:Manpage.s_none ~doc:"Interface to listen on."
+        [ "interface" ]
     in
     Mirage_runtime.register_arg
       Arg.(value & opt Config_parser.(some (ignore_c "interface")) None doc)
 
   let except_interface =
     let doc =
-      Arg.info ~docs:ignored ~doc:"Interface to not listen on."
+      Arg.info ~docs:Manpage.s_none ~doc:"Interface to not listen on."
         [ "except-interface" ]
     in
     Mirage_runtime.register_arg
@@ -69,7 +71,7 @@ module K = struct
 
   let listen_address =
     let doc =
-      Arg.info ~docs:ignored ~doc:"IP address to listen on."
+      Arg.info ~docs:Manpage.s_none ~doc:"IP address to listen on."
         [ "listen-address" ]
     in
     Mirage_runtime.register_arg
@@ -78,7 +80,7 @@ module K = struct
 
   let no_dhcp_interface =
     let doc =
-      Arg.info ~docs:ignored ~doc:"Only provide DNS service on."
+      Arg.info ~docs:Manpage.s_none ~doc:"Only provide DNS service on."
         [ "no-dhcp-interface" ]
     in
     Mirage_runtime.register_arg
@@ -87,7 +89,7 @@ module K = struct
 
   let bind_interfaces =
     let doc =
-      Arg.info ~docs:ignored ~doc:"Bind to interface IP address only."
+      Arg.info ~docs:Manpage.s_none ~doc:"Bind to interface IP address only."
         [ "bind_interfaces" ]
     in
     Mirage_runtime.register_arg Arg.(value & flag doc)
