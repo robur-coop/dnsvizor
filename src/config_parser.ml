@@ -34,8 +34,7 @@ let lease_time =
         match int_of_string_opt dur with
         | None -> fail (Fmt.str "Couldn't convert %S to an integer" dur)
         | Some n ->
-            choice
-              ~failure_msg:"bad lease time"
+            choice ~failure_msg:"bad lease time"
               [
                 string "w" *> return ("w", n * week);
                 string "d" *> return ("d", n * day);
@@ -103,7 +102,8 @@ let pp_dhcp_range ppf
     lease_time
 
 let mode =
-  choice [ string "static" *> return `Static; string "proxy" *> return `Proxy ]
+  choice
+    [ string "static" *> return `Static; string "proxy" *> return `Proxy ]
     ~failure_msg:"bad mode"
 
 let dhcp_range =
@@ -146,10 +146,10 @@ let parse_file data =
     let ignore_flag key =
       string key *> (end_of_line <|> end_of_input) >>| fun _ -> `Ignored
     in
-    choice
-      ~failure_msg:"bad configuration directive"
+    choice ~failure_msg:"bad configuration directive"
       [
-        (string "dhcp-range=" *> commit *> dhcp_range >>| fun range -> `Dhcp_range range);
+        ( string "dhcp-range=" *> commit *> dhcp_range >>| fun range ->
+          `Dhcp_range range );
         ignore_directive "interface";
         ignore_directive "except-interface";
         ignore_directive "listen-address";
