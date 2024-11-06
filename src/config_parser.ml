@@ -146,6 +146,11 @@ let parse_file data =
     let ignore_flag key =
       string key *> (end_of_line <|> end_of_input) >>| fun _ -> `Ignored
     in
+    let isspace = function
+      | ' ' | '\x0c' | '\n' | '\r' | '\t' | '\x0b' -> true
+      | _ -> false
+    in
+    skip_while isspace *> commit *>
     choice ~failure_msg:"bad configuration directive"
       [
         ( string "dhcp-range=" *> commit *> dhcp_range >>| fun range ->
