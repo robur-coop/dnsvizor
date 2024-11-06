@@ -49,28 +49,37 @@ module K = struct
     Mirage_runtime.register_arg
       Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
 
+  let ignored = "DNSMASQ COMPATIBILITY OPTIONS (IGNORED)"
+
   let interface =
-    let doc = Arg.info ~doc:"Interface to listen on." [ "interface" ] in
+    let doc =
+      Arg.info ~docs:ignored ~doc:"Interface to listen on." [ "interface" ]
+    in
     Mirage_runtime.register_arg
       Arg.(value & opt Config_parser.(some (ignore_c "interface")) None doc)
 
   let except_interface =
     let doc =
-      Arg.info ~doc:"Interface to not listen on." [ "except-interface" ]
+      Arg.info ~docs:ignored ~doc:"Interface to not listen on."
+        [ "except-interface" ]
     in
     Mirage_runtime.register_arg
       Arg.(
         value & opt Config_parser.(some (ignore_c "except-interface")) None doc)
 
   let listen_address =
-    let doc = Arg.info ~doc:"IP address to listen on." [ "listen-address" ] in
+    let doc =
+      Arg.info ~docs:ignored ~doc:"IP address to listen on."
+        [ "listen-address" ]
+    in
     Mirage_runtime.register_arg
       Arg.(
         value & opt Config_parser.(some (ignore_c "listen-address")) None doc)
 
   let no_dhcp_interface =
     let doc =
-      Arg.info ~doc:"Only provide DNS service on." [ "no-dhcp-interface" ]
+      Arg.info ~docs:ignored ~doc:"Only provide DNS service on."
+        [ "no-dhcp-interface" ]
     in
     Mirage_runtime.register_arg
       Arg.(
@@ -78,7 +87,8 @@ module K = struct
 
   let bind_interfaces =
     let doc =
-      Arg.info ~doc:"Bind to interface IP address only." [ "bind_interfaces" ]
+      Arg.info ~docs:ignored ~doc:"Bind to interface IP address only."
+        [ "bind_interfaces" ]
     in
     Mirage_runtime.register_arg Arg.(value & flag doc)
 end
