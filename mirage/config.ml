@@ -31,9 +31,17 @@ let dnsvizor =
   main ~packages "Unikernel.Main"
     (random @-> pclock @-> mclock @-> time @-> network @-> job)
 
+(* this works around the [default_network] on Unix brings a --interface runtime
+   argument that collides with dnsmasq arguments *)
+let mynetwork =
+  match_impl
+    Key.(value target)
+    [ (`Unix, netif ~group:"unix" "tap0") ]
+    ~default:default_network
+
 let () =
   register "dnsvizor"
     [
       dnsvizor $ default_random $ default_posix_clock $ default_monotonic_clock
-      $ default_time $ default_network;
+      $ default_time $ mynetwork;
     ]
