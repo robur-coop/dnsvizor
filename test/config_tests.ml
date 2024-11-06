@@ -1,5 +1,9 @@
 open Dnsvizor.Config_parser
 
+let msg_t =
+  let pp ppf (`Msg s) = Fmt.string ppf s in
+  Alcotest.testable pp (fun (`Msg a) (`Msg b) -> String.equal a b)
+
 let opt_eq f a b =
   match (a, b) with
   | None, None -> true
@@ -38,7 +42,7 @@ let ok_dhcp_range () =
   in
   Alcotest.(
     check
-      (result dhcp_range_t string)
+      (result dhcp_range_t msg_t)
       "DHCP range is good" (Ok expected)
       (parse_one dhcp_range input))
 
@@ -56,7 +60,7 @@ let ok_dhcp_range_with_netmask () =
   in
   Alcotest.(
     check
-      (result dhcp_range_t string)
+      (result dhcp_range_t msg_t)
       "DHCP range with netmask is good" (Ok expected)
       (parse_one dhcp_range input))
 
@@ -76,7 +80,7 @@ let ok_dhcp_range_static () =
   in
   Alcotest.(
     check
-      (result dhcp_range_t string)
+      (result dhcp_range_t msg_t)
       "DHCP range with static is good" (Ok expected)
       (parse_one dhcp_range input))
 
@@ -87,7 +91,29 @@ let tests =
     ("DHCP range static", `Quick, ok_dhcp_range_static);
   ]
 
-let tests = [ ("Config tests", tests) ]
+let string_of_file filename =
+  let config_dir = "sample-configuration-files" in
+  let file = Filename.concat config_dir filename in
+  try
+    let fh = open_in file in
+    let content = really_input_string fh (in_channel_length fh) in
+    close_in_noerr fh;
+    content
+  with _ -> Alcotest.failf "Error reading file %S" file
+
+let test_configuration config file () =
+  match parse_file (string_of_file file) with
+  | Error (`Msg msg) -> Alcotest.failf "Error parsing %S: %s" file msg
+  | Ok data ->
+      Alcotest.(check int)
+        "Number of configuration items matches" (List.length config)
+        (List.length data)
+
+let config_file_tests =
+  [ ("First example", `Quick, test_configuration [] "simple.conf") ]
+
+let tests =
+  [ ("Config tests", tests); ("Configuration file tests", config_file_tests) ]
 
 let () =
   Logs.set_reporter @@ Logs_fmt.reporter ~dst:Format.std_formatter ();

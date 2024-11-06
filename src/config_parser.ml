@@ -1,18 +1,17 @@
 open Angstrom
 
-(* TODO revise the error handling, since rule may output an error *)
+module Log =
+  (val Logs.(
+         src_log
+         @@ Src.create ~doc:"DNSvizor configuration module" "dnsvizor.config")
+      : Logs.LOG)
+
 let parse_one rule config_str =
-  parse_string ~consume:Consume.All
-    (rule
-    <|> ( available >>| min 100 >>= peek_string >>= fun context ->
-          pos >>= fun pos ->
-          fail (Printf.sprintf "Error at byte offset %d: %S" pos context) ))
-    config_str
+  match parse_string ~consume:Consume.All rule config_str with
+  | Ok _ as o -> o
+  | Error msg -> Error (`Msg (Fmt.str "Parse error in %S: %s" config_str msg))
 
-let lift_err = function Ok _ as o -> o | Error e -> Error (`Msg e)
-
-let conv_cmdliner ?docv rule pp =
-  Cmdliner.Arg.conv ?docv ((fun x -> parse_one rule x |> lift_err), pp)
+let conv_cmdliner ?docv rule pp = Cmdliner.Arg.conv ?docv (parse_one rule, pp)
 
 (* some basic rules *)
 
@@ -30,21 +29,40 @@ let week = 7 * day
 let infinite = 1 lsl 32 (* DHCP has 32 bits for this *)
 
 let lease_time =
-  (* TODO check that the time fits into 32 bits *)
   take_while1 (function '0' .. '9' -> true | _ -> false)
   >>= (fun dur ->
         match int_of_string_opt dur with
         | None -> fail (Fmt.str "Couldn't convert %S to an integer" dur)
-        | Some dur ->
-            choice
+        | Some n ->
+            choice ~failure_msg:"bad lease time"
               [
-                string "w" *> return (dur * week);
-                string "d" *> return (dur * day);
-                string "h" *> return (dur * hour);
-                string "m" *> return (dur * minute);
-                end_of_input *> return dur;
-              ])
+                string "w" *> return ("w", n * week);
+                string "d" *> return ("d", n * day);
+                string "h" *> return ("h", n * hour);
+                string "m" *> return ("m", n * minute);
+                return ("", n);
+              ]
+            >>= fun (c, r) ->
+            if r > 0 && r < infinite then return r
+            else
+              fail
+                (Fmt.str "Value %u (from %S%s) does not fit into 32 bits" r dur
+                   c))
   <|> string "infinite" *> return infinite
+
+let line =
+  take_while (function '\n' -> false | _ -> true)
+  <* (end_of_line <|> end_of_input)
+
+let ignore_line key =
+  line >>= fun txt ->
+  Log.warn (fun m -> m "ignoring %S %S" key txt);
+  return txt
+
+let pp_ignored_line key ppf data = Fmt.pf ppf "--%s=%s" key data
+
+let ignore_c key =
+  conv_cmdliner ~docv:"IGNORED" (ignore_line key) (pp_ignored_line key)
 
 (* real grammars *)
 
@@ -84,7 +102,9 @@ let pp_dhcp_range ppf
     lease_time
 
 let mode =
-  choice [ string "static" *> return `Static; string "proxy" *> return `Proxy ]
+  choice
+    [ string "static" *> return `Static; string "proxy" *> return `Proxy ]
+    ~failure_msg:"bad mode"
 
 let dhcp_range =
   (* TODO prefix: [tag:<tag>[,tag:<tag>],][set:<tag>,]
@@ -103,7 +123,8 @@ let dhcp_range =
       >>| fun broadcast -> (netmask, broadcast) )
   >>= fun net_broad ->
   option None (string "," *> lease_time >>| fun l -> Some l)
-  >>| fun lease_time ->
+  >>= fun lease_time ->
+  end_of_line <|> end_of_input >>| fun () ->
   let end_addr, mode =
     match mode_or_end with
     | `Mode m -> (None, Some m)
@@ -116,3 +137,37 @@ let dhcp_range_c =
   conv_cmdliner
     ~docv:"<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
     dhcp_range pp_dhcp_range
+
+let parse_file data =
+  let rules =
+    let ignore_directive key =
+      string (key ^ "=") *> commit *> ignore_line key >>| fun _ -> `Ignored
+    in
+    let ignore_flag key =
+      string key *> (end_of_line <|> end_of_input) >>| fun _ -> `Ignored
+    in
+    let isspace = function
+      | ' ' | '\x0c' | '\n' | '\r' | '\t' | '\x0b' -> true
+      | _ -> false
+    in
+    skip_while isspace *> commit
+    *> choice ~failure_msg:"bad configuration directive"
+         [
+           ( string "dhcp-range=" *> commit *> dhcp_range >>| fun range ->
+             `Dhcp_range range );
+           ignore_directive "interface";
+           ignore_directive "except-interface";
+           ignore_directive "listen-address";
+           ignore_directive "no-dhcp-interface";
+           ignore_flag "bind-interfaces";
+           (string "#" *> ignore_line "#" >>| fun _ -> `Ignored);
+         ]
+  in
+  let top =
+    fix (fun r ->
+        rules >>= fun e ->
+        commit *> end_of_input *> return [ e ] <|> (List.cons e <$> r))
+  in
+  match parse_string ~consume:Consume.All top data with
+  | Ok x -> Ok (List.filter (function `Ignored -> false | _ -> true) x)
+  | Error msg -> Error (`Msg msg)
