@@ -133,9 +133,12 @@ let dhcp_range =
   let netmask, broadcast = net_broad in
   { start_addr; end_addr; mode; netmask; broadcast; lease_time }
 
+let dhcp_range_docv =
+  "<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
+
 let dhcp_range_c =
   conv_cmdliner
-    ~docv:"<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
+    ~docv:dhcp_range_docv
     dhcp_range pp_dhcp_range
 
 let parse_file data =
