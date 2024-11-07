@@ -136,10 +136,7 @@ let dhcp_range =
 let dhcp_range_docv =
   "<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
 
-let dhcp_range_c =
-  conv_cmdliner
-    ~docv:dhcp_range_docv
-    dhcp_range pp_dhcp_range
+let dhcp_range_c = conv_cmdliner ~docv:dhcp_range_docv dhcp_range pp_dhcp_range
 
 let parse_file data =
   let rules =
