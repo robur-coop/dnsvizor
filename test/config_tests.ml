@@ -28,6 +28,8 @@ let dhcp_range_t =
   in
   Alcotest.testable pp_dhcp_range equal
 
+let parse_one_arg rule input = parse_one (rule arg_end_of_directive) input
+
 let ok_dhcp_range () =
   let input = "192.168.0.50,192.168.0.150,12h" in
   let expected =
@@ -44,7 +46,7 @@ let ok_dhcp_range () =
     check
       (result dhcp_range_t msg_t)
       "DHCP range is good" (Ok expected)
-      (parse_one dhcp_range input))
+      (parse_one_arg dhcp_range input))
 
 let ok_dhcp_range_with_netmask () =
   let input = "192.168.0.50,192.168.0.150,255.255.255.0,12h" in
@@ -62,7 +64,7 @@ let ok_dhcp_range_with_netmask () =
     check
       (result dhcp_range_t msg_t)
       "DHCP range with netmask is good" (Ok expected)
-      (parse_one dhcp_range input))
+      (parse_one_arg dhcp_range input))
 
 let ok_dhcp_range_static () =
   (* NOTE: there's no netmask, with dnsmasq it comes from the configured
@@ -82,7 +84,7 @@ let ok_dhcp_range_static () =
     check
       (result dhcp_range_t msg_t)
       "DHCP range with static is good" (Ok expected)
-      (parse_one dhcp_range input))
+      (parse_one_arg dhcp_range input))
 
 let tests =
   [
@@ -110,7 +112,12 @@ let test_configuration config file () =
         (List.length data)
 
 let config_file_tests =
-  [ ("First example", `Quick, test_configuration [] "simple.conf") ]
+  [
+    ("First example", `Quick, test_configuration [] "simple.conf");
+    ( "White space and comments",
+      `Quick,
+      test_configuration [] "whitespace-and-comments.conf" );
+  ]
 
 let tests =
   [ ("Config tests", tests); ("Configuration file tests", config_file_tests) ]

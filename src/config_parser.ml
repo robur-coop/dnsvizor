@@ -50,6 +50,25 @@ let lease_time =
                    c))
   <|> string "infinite" *> return infinite
 
+let isspace = function
+  | ' ' | '\x0c' | '\n' | '\r' | '\t' | '\x0b' -> true
+  | _ -> false
+
+let conf_end_of_directive =
+  let comment =
+    char '#' *> commit
+    *> skip_while (function '\n' -> false | _ -> true)
+    *> end_of_line
+    <|> end_of_input
+  in
+  fix (fun r ->
+      end_of_line <|> end_of_input
+      <|> (* A comment in a directive is only allowed if separated by a space *)
+      skip isspace *> (comment <?> "comment" <|> r))
+  <?> "config file end-of-directive"
+
+let arg_end_of_directive = end_of_input
+
 let line =
   take_while (function '\n' -> false | _ -> true)
   <* (end_of_line <|> end_of_input)
@@ -106,7 +125,7 @@ let mode =
     [ string "static" *> return `Static; string "proxy" *> return `Proxy ]
     ~failure_msg:"bad mode"
 
-let dhcp_range =
+let dhcp_range end_of_directive =
   (* TODO prefix: [tag:<tag>[,tag:<tag>],][set:<tag>,]
      V4: <start-addr>[,<end-addr>|<mode>[,<netmask>[,<broadcast>]]][,<lease time>]
      TODO V6: <start-IPv6addr>[,<end-IPv6addr>|constructor:<interface>][,<mode>][,<prefix-len>][,<lease time>] *)
@@ -124,7 +143,7 @@ let dhcp_range =
   >>= fun net_broad ->
   option None (string "," *> lease_time >>| fun l -> Some l)
   >>= fun lease_time ->
-  end_of_line <|> end_of_input >>| fun () ->
+  end_of_directive >>| fun () ->
   let end_addr, mode =
     match mode_or_end with
     | `Mode m -> (None, Some m)
@@ -136,31 +155,36 @@ let dhcp_range =
 let dhcp_range_docv =
   "<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
 
-let dhcp_range_c = conv_cmdliner ~docv:dhcp_range_docv dhcp_range pp_dhcp_range
+let dhcp_range_c =
+  conv_cmdliner ~docv:dhcp_range_docv
+    (dhcp_range arg_end_of_directive)
+    pp_dhcp_range
 
 let parse_file data =
   let rules =
+    let skip_spcs = skip_while (function ' ' -> true | _ -> false) in
+    let directive_prefix name =
+      string name *> skip_spcs *> char '=' *> commit *> skip_spcs
+      <?> Printf.sprintf "directive prefix %S" name
+    in
     let ignore_directive key =
-      string (key ^ "=") *> commit *> ignore_line key >>| fun _ -> `Ignored
+      directive_prefix key *> commit *> ignore_line key >>| fun _ -> `Ignored
     in
     let ignore_flag key =
-      string key *> (end_of_line <|> end_of_input) >>| fun _ -> `Ignored
-    in
-    let isspace = function
-      | ' ' | '\x0c' | '\n' | '\r' | '\t' | '\x0b' -> true
-      | _ -> false
+      string key *> conf_end_of_directive >>| fun _ -> `Ignored
     in
     skip_while isspace *> commit
     *> choice ~failure_msg:"bad configuration directive"
          [
-           ( string "dhcp-range=" *> commit *> dhcp_range >>| fun range ->
-             `Dhcp_range range );
+           ( directive_prefix "dhcp-range" *> dhcp_range conf_end_of_directive
+           >>| fun range -> `Dhcp_range range );
            ignore_directive "interface";
            ignore_directive "except-interface";
            ignore_directive "listen-address";
            ignore_directive "no-dhcp-interface";
            ignore_flag "bind-interfaces";
-           (string "#" *> ignore_line "#" >>| fun _ -> `Ignored);
+           ( string "#" *> commit *> ignore_line "#" <?> "comment" >>| fun _ ->
+             `Ignored );
          ]
   in
   let top =
