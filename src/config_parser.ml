@@ -212,8 +212,16 @@ let dhcp_host end_of_directive =
   let ipv4_addr = ipv4_dotted >>| fun ip -> `Ipv4addr ip in
   let ignore_thing = string "ignore" *> return `Ignore in
   let hostname =
-    (* FIXME *)
-    fail "not implemented"
+    sep_by1 (char '.')
+      (scan_string () (fun () c ->
+           match c with
+           | 'a'..'z' | 'A'..'Z' | '0'..'9' | '-' -> Some ()
+           | _ -> None))
+    >>= fun labels ->
+    match Domain_name.of_strings labels with
+    | Ok domain -> return (`Domain_name domain)
+    | Error `Msg e -> fail (Fmt.str "Invalid domain name: %s: %a" e
+                              Fmt.(list ~sep:(any ".") string) labels)
   in
   let dhcp_host_item =
     choice ~failure_msg:"Bad dhcp-host argument" [
