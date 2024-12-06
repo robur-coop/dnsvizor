@@ -230,13 +230,26 @@ let dhcp_host end_of_directive =
       tag_thing ;
       mac_addr ;
       ipv4_addr ;
+      (* TODO: ipv6_addr ; *)
       lease_time ;
       ignore_thing ;
       hostname ;
     ]
   in
   sep_by1 (char ',') dhcp_host_item <* end_of_directive >>= fun items ->
-  (* TODO: process items *)
+  (* TODO: process items:
+     - We can have at most one id thing except and id and id:* whose semantics
+       are very unclear. Thus we should probably forbid that combination.
+     - For net:/set: we can have as many as we like.
+     - We can as well have as many tag: as we like.
+     - There is also no limit on mac addresses.
+     - There can be at most one ipv4 address.
+     - There can be at most one lease time.
+     - The ignore thing will set a flag. Repeating it is redundant if harmless.
+     - There can be at most one domain name.
+     The option parser in dnsmasq will not enforce much of this. Instead, the
+     last value will overwrite previous values if only one value makes sense.
+     We should do better.  *)
   ignore items;
   return ()
 
