@@ -152,6 +152,86 @@ let dhcp_range end_of_directive =
   let netmask, broadcast = net_broad in
   { start_addr; end_addr; mode; netmask; broadcast; lease_time }
 
+let dhcp_host end_of_directive =
+  let until_comma =
+    scan_string () (fun () c ->
+        (* FIXME: probably be more precise in accepted characters *)
+        match c with
+        | ',' -> None
+        | _ -> Some ())
+  in
+  let lease_time = lease_time >>| fun lease -> `Lease_time lease in
+  let id_thing =
+    string_ci "id:" *> commit *>
+    choice ~failure_msg:"Bad id thing" [
+      (char '*' *> return `Any_client_id) ;
+      (* FIXME: probably be more precise in accepted characters *)
+      (scan false (fun is_hex -> function
+           | ',' -> None
+           | ':' -> Some true
+           | _ -> Some is_hex) >>= fun (name, is_hex) ->
+       if is_hex then
+         (* This is not very smart *)
+         let hex_name = String.concat "" (String.split_on_char ':' name) in
+         match Ohex.decode hex_name with
+         | name -> return (`Client_id name)
+         | exception Invalid_argument _ -> fail "bad hex constant"
+       else return (`Client_id name)) ;
+    ]
+  in
+  let net_set_thing =
+    choice [
+      string "net:";
+      string "set:"
+    ] *> commit *>
+    until_comma >>| fun net ->
+    `Net net
+  in
+  let tag_thing =
+    string "tag:" *> commit *>
+    until_comma >>| fun tag ->
+    `Tag tag
+  in
+  let mac_addr =
+    (* NOTE: ocaml-tcpip only supports mac addresses of 6 bytes so let's not
+       try to parse mac addresses for exotic hardware. We will allow ethernet
+       (10 Mb) mac type only. *)
+    (* TODO: wildcards *)
+    let isdecimal = function '0'..'9' -> true | _ -> false in
+    option "" (string "1-") *>
+    peek_string 3 >>= fun first ->
+    if isdecimal first.[0] && isdecimal first.[1] && first.[2] = ':' then
+      commit *>
+      take (6*2+5) >>= fun mac ->
+      match Macaddr.of_string mac with
+      | Ok mac -> return (`Macaddr mac)
+      | Error `Msg e -> fail (Fmt.str "Invalid MAC address: %s: %S" e mac)
+    else
+      fail "not a mac address"
+  in
+  let ipv4_addr = ipv4_dotted >>| fun ip -> `Ipv4addr ip in
+  let ignore_thing = string "ignore" *> return `Ignore in
+  let hostname =
+    (* FIXME *)
+    fail "not implemented"
+  in
+  let dhcp_host_item =
+    choice ~failure_msg:"Bad dhcp-host argument" [
+      id_thing ;
+      net_set_thing ;
+      tag_thing ;
+      mac_addr ;
+      ipv4_addr ;
+      lease_time ;
+      ignore_thing ;
+      hostname ;
+    ]
+  in
+  sep_by1 (char ',') dhcp_host_item <* end_of_directive >>= fun items ->
+  (* TODO: process items *)
+  ignore items;
+  return ()
+
 let dhcp_range_docv =
   "<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
 
