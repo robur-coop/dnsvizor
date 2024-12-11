@@ -112,19 +112,19 @@ type dhcp_config = {
    field says to ignore matching clients making the [ipv4] and [lease_time]
    fields questionable. *)
 
+let pp_duration ppf = function
+  | x when x = infinite -> Fmt.string ppf "infinite"
+  | x when x mod week = 0 -> Fmt.pf ppf "%uw" (x / week)
+  | x when x mod day = 0 -> Fmt.pf ppf "%ud" (x / day)
+  | x when x mod hour = 0 -> Fmt.pf ppf "%uh" (x / hour)
+  | x when x mod minute = 0 -> Fmt.pf ppf "%um" (x / minute)
+  | x -> Fmt.pf ppf "%u" x
+
 let pp_dhcp_range ppf
     { start_addr; end_addr; mode; netmask; broadcast; lease_time } =
   let pp_mode ppf = function
     | `Static -> Fmt.string ppf "static"
     | `Proxy -> Fmt.string ppf "proxy"
-  in
-  let pp_duration ppf = function
-    | x when x = infinite -> Fmt.string ppf "infinite"
-    | x when x mod week = 0 -> Fmt.pf ppf "%uw" (x / week)
-    | x when x mod day = 0 -> Fmt.pf ppf "%ud" (x / day)
-    | x when x mod hour = 0 -> Fmt.pf ppf "%uh" (x / hour)
-    | x when x mod minute = 0 -> Fmt.pf ppf "%um" (x / minute)
-    | x -> Fmt.pf ppf "%u" x
   in
   Fmt.pf ppf "%a%a%a%a%a%a" Ipaddr.V4.pp start_addr
     Fmt.(option ~none:nop (any "," ++ Ipaddr.V4.pp))
@@ -137,6 +137,54 @@ let pp_dhcp_range ppf
     broadcast
     Fmt.(option ~none:nop (any "," ++ pp_duration))
     lease_time
+
+let pp_dhcp_config ppf
+    { id; nets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name } =
+  let sep =
+    let use_sep = ref false in
+    fun () ->
+      if !use_sep then
+        Fmt.pf ppf ",";
+      use_sep := true
+  in
+  List.iter (fun mac ->
+      sep ();
+      Macaddr.pp ppf mac)
+    macs;
+  Option.iter (fun id ->
+      sep ();
+      match id with
+      | `Any_client_id -> Fmt.pf ppf "id:*"
+      | `Client_id id ->
+        (* TODO: use hex when text is inappropriate *)
+        Fmt.pf ppf "id:%s" id)
+    id;
+  List.iter (fun net ->
+      sep ();
+      Fmt.pf ppf "net:%s" net)
+    nets;
+  List.iter (fun tag ->
+      sep ();
+      Fmt.pf ppf "tag:%s" tag)
+    tags;
+  Option.iter (fun ipv4 ->
+      sep ();
+      Ipaddr.V4.pp ppf ipv4)
+    ipv4;
+  Option.iter (fun ipv6 ->
+      sep ();
+      Ipaddr.V6.pp ppf ipv6)
+    ipv6;
+  Option.iter (fun domain_name ->
+      sep ();
+      Domain_name.pp ppf domain_name)
+    domain_name;
+  Option.iter (fun lease_time ->
+      sep ();
+      pp_duration ppf lease_time)
+    lease_time;
+  if ignore then
+    (sep (); Fmt.pf ppf "ignore")
 
 let mode =
   choice
@@ -303,6 +351,13 @@ let dhcp_host end_of_directive =
         domain_name = None }
       items
   in
+  (* Above we reverse the order so let's undo that. *)
+  let thing =
+    { thing with
+      nets = List.rev thing.nets;
+      tags = List.rev thing.tags;
+      macs = List.rev thing.macs }
+  in
   return thing
 
 let dhcp_range_docv =
@@ -312,6 +367,14 @@ let dhcp_range_c =
   conv_cmdliner ~docv:dhcp_range_docv
     (dhcp_range arg_end_of_directive)
     pp_dhcp_range
+
+let dhcp_host_docv =
+  "[<hwaddr>][,id:<client_id>|*][,set:<tag>][,tag:<tag>][,<ipaddr>][,<host‐name>][,<lease_time>][,ignore]"
+
+let dhcp_host_c =
+  conv_cmdliner ~docv:dhcp_range_docv
+    (dhcp_host arg_end_of_directive)
+    pp_dhcp_config
 
 let parse_file data =
   let rules =
