@@ -104,7 +104,7 @@ type dhcp_config = {
   lease_time : int option;
   ignore : bool;
   (* TODO: [`host] Domain_name.t?! *)
-  domain_name : [`raw ] Domain_name.t option;
+  domain_name : [ `raw ] Domain_name.t option;
 }
 (* the dhcp_config data structure is not great to work with. The fields [id],
    [nets], [tags] and [macs] are used for matching clients. The fields [ipv4]
@@ -143,48 +143,56 @@ let pp_dhcp_config ppf
   let sep =
     let use_sep = ref false in
     fun () ->
-      if !use_sep then
-        Fmt.pf ppf ",";
+      if !use_sep then Fmt.pf ppf ",";
       use_sep := true
   in
-  List.iter (fun mac ->
+  List.iter
+    (fun mac ->
       sep ();
       Macaddr.pp ppf mac)
     macs;
-  Option.iter (fun id ->
+  Option.iter
+    (fun id ->
       sep ();
       match id with
       | `Any_client_id -> Fmt.pf ppf "id:*"
       | `Client_id id ->
-        (* TODO: use hex when text is inappropriate *)
-        Fmt.pf ppf "id:%s" id)
+          (* TODO: use hex when text is inappropriate *)
+          Fmt.pf ppf "id:%s" id)
     id;
-  List.iter (fun net ->
+  List.iter
+    (fun net ->
       sep ();
       Fmt.pf ppf "net:%s" net)
     nets;
-  List.iter (fun tag ->
+  List.iter
+    (fun tag ->
       sep ();
       Fmt.pf ppf "tag:%s" tag)
     tags;
-  Option.iter (fun ipv4 ->
+  Option.iter
+    (fun ipv4 ->
       sep ();
       Ipaddr.V4.pp ppf ipv4)
     ipv4;
-  Option.iter (fun ipv6 ->
+  Option.iter
+    (fun ipv6 ->
       sep ();
       Ipaddr.V6.pp ppf ipv6)
     ipv6;
-  Option.iter (fun domain_name ->
+  Option.iter
+    (fun domain_name ->
       sep ();
       Domain_name.pp ppf domain_name)
     domain_name;
-  Option.iter (fun lease_time ->
+  Option.iter
+    (fun lease_time ->
       sep ();
       pp_duration ppf lease_time)
     lease_time;
-  if ignore then
-    (sep (); Fmt.pf ppf "ignore")
+  if ignore then (
+    sep ();
+    Fmt.pf ppf "ignore")
 
 let mode =
   choice
@@ -222,58 +230,49 @@ let dhcp_host end_of_directive =
   let until_comma =
     scan_string () (fun () c ->
         (* FIXME: probably be more precise in accepted characters *)
-        match c with
-        | ',' -> None
-        | _ -> Some ())
+        match c with ',' -> None | _ -> Some ())
   in
   let lease_time = lease_time >>| fun lease -> `Lease_time lease in
   let id_thing =
-    string_ci "id:" *> commit *>
-    choice ~failure_msg:"Bad id thing" [
-      (char '*' *> return `Any_client_id) ;
-      (* FIXME: probably be more precise in accepted characters *)
-      (scan false (fun is_hex -> function
-           | ',' -> None
-           | ':' -> Some true
-           | _ -> Some is_hex) >>= fun (name, is_hex) ->
-       if is_hex then
-         (* This is not very smart *)
-         let hex_name = String.concat "" (String.split_on_char ':' name) in
-         match Ohex.decode hex_name with
-         | name -> return (`Client_id name)
-         | exception Invalid_argument _ -> fail "bad hex constant"
-       else return (`Client_id name)) ;
-    ]
+    string_ci "id:" *> commit
+    *> choice ~failure_msg:"Bad id thing"
+         [
+           char '*' *> return `Any_client_id;
+           (* FIXME: probably be more precise in accepted characters *)
+           ( scan false (fun is_hex -> function
+               | ',' -> None | ':' -> Some true | _ -> Some is_hex)
+           >>= fun (name, is_hex) ->
+             if is_hex then
+               (* This is not very smart *)
+               let hex_name =
+                 String.concat "" (String.split_on_char ':' name)
+               in
+               match Ohex.decode hex_name with
+               | name -> return (`Client_id name)
+               | exception Invalid_argument _ -> fail "bad hex constant"
+             else return (`Client_id name) );
+         ]
   in
   let net_set_thing =
-    choice [
-      string "net:";
-      string "set:"
-    ] *> commit *>
-    until_comma >>| fun net ->
-    `Net net
+    choice [ string "net:"; string "set:" ] *> commit *> until_comma
+    >>| fun net -> `Net net
   in
   let tag_thing =
-    string "tag:" *> commit *>
-    until_comma >>| fun tag ->
-    `Tag tag
+    string "tag:" *> commit *> until_comma >>| fun tag -> `Tag tag
   in
   let mac_addr =
     (* NOTE: ocaml-tcpip only supports mac addresses of 6 bytes so let's not
        try to parse mac addresses for exotic hardware. We will allow ethernet
        (10 Mb) mac type only. *)
     (* TODO: wildcards *)
-    let isdecimal = function '0'..'9' -> true | _ -> false in
-    option "" (string "1-") *>
-    peek_string 3 >>= fun first ->
+    let isdecimal = function '0' .. '9' -> true | _ -> false in
+    option "" (string "1-") *> peek_string 3 >>= fun first ->
     if isdecimal first.[0] && isdecimal first.[1] && first.[2] = ':' then
-      commit *>
-      take (6*2+5) >>= fun mac ->
+      commit *> take ((6 * 2) + 5) >>= fun mac ->
       match Macaddr.of_string mac with
       | Ok mac -> return (`Macaddr mac)
-      | Error `Msg e -> fail (Fmt.str "Invalid MAC address: %s: %S" e mac)
-    else
-      fail "not a mac address"
+      | Error (`Msg e) -> fail (Fmt.str "Invalid MAC address: %s: %S" e mac)
+    else fail "not a mac address"
   in
   let ipv4_addr = ipv4_dotted >>| fun ip -> `Ipv4addr ip in
   let ignore_thing = string "ignore" *> return `Ignore in
@@ -281,27 +280,31 @@ let dhcp_host end_of_directive =
     sep_by1 (char '.')
       (scan_string () (fun () c ->
            match c with
-           | 'a'..'z' | 'A'..'Z' | '0'..'9' | '-' -> Some ()
+           | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-' -> Some ()
            | _ -> None))
     >>= fun labels ->
     (* TODO: refine domain name kind *)
     match Domain_name.of_strings labels with
     | Ok domain -> return (`Domain_name domain)
-    | Error `Msg e -> fail (Fmt.str "Invalid domain name: %s: %a" e
-                              Fmt.(list ~sep:(any ".") string) labels)
+    | Error (`Msg e) ->
+        fail
+          (Fmt.str "Invalid domain name: %s: %a" e
+             Fmt.(list ~sep:(any ".") string)
+             labels)
   in
   let dhcp_host_item =
-    choice ~failure_msg:"Bad dhcp-host argument" [
-      id_thing ;
-      net_set_thing ;
-      tag_thing ;
-      mac_addr ;
-      ipv4_addr ;
-      (* TODO: ipv6_addr ; *)
-      lease_time ;
-      ignore_thing ;
-      hostname ;
-    ]
+    choice ~failure_msg:"Bad dhcp-host argument"
+      [
+        id_thing;
+        net_set_thing;
+        tag_thing;
+        mac_addr;
+        ipv4_addr;
+        (* TODO: ipv6_addr ; *)
+        lease_time;
+        ignore_thing;
+        hostname;
+      ]
   in
   sep_by1 (char ',') dhcp_host_item <* end_of_directive >>= fun items ->
   (* Process items:
@@ -316,47 +319,63 @@ let dhcp_host end_of_directive =
      - There can be at most one domain name.
      The option parser in dnsmasq will not enforce much of this. Instead, the
      last value will overwrite previous values if only one value makes sense.
-     We should do better.  *)
+     We should do better. *)
   let thing =
-    List.fold_left (fun config item ->
+    List.fold_left
+      (fun config item ->
         match item with
-        | `Any_client_id | `Client_id _ as id ->
-          if Option.is_some config.id then
-            Log.warn (fun m -> m "Redundant id in --dhcp-host. Ignoring previous value!");
-          { config with id = Some id }
-        | `Net net ->
-          { config with nets = net :: config.nets }
-        | `Tag tag ->
-          { config with tags = tag :: config.tags }
-        | `Macaddr mac ->
-          { config with macs = mac :: config.macs }
+        | (`Any_client_id | `Client_id _) as id ->
+            if Option.is_some config.id then
+              Log.warn (fun m ->
+                  m "Redundant id in --dhcp-host. Ignoring previous value!");
+            { config with id = Some id }
+        | `Net net -> { config with nets = net :: config.nets }
+        | `Tag tag -> { config with tags = tag :: config.tags }
+        | `Macaddr mac -> { config with macs = mac :: config.macs }
         | `Ipv4addr ipv4 ->
-          if Option.is_some config.ipv4 then
-            Log.warn (fun m -> m "Redundant ipv4 in --dhcp-host. Ignoring previous value!");
-          { config with ipv4 = Some ipv4 }
+            if Option.is_some config.ipv4 then
+              Log.warn (fun m ->
+                  m "Redundant ipv4 in --dhcp-host. Ignoring previous value!");
+            { config with ipv4 = Some ipv4 }
         | `Lease_time time ->
-          if Option.is_some config.lease_time then
-            Log.warn (fun m -> m "Redundant lease time in --dhcp-host. Ignoring previous value!");
-          { config with lease_time = Some time }
+            if Option.is_some config.lease_time then
+              Log.warn (fun m ->
+                  m
+                    "Redundant lease time in --dhcp-host. Ignoring previous \
+                     value!");
+            { config with lease_time = Some time }
         | `Ignore ->
-          if config.ignore then
-            Log.warn (fun m -> m "Redundant 'ignore' in --dhcp-host.");
-          { config with ignore = true }
-        | `Domain_name domain_name  ->
-          if Option.is_some config.domain_name then
-            Log.warn (fun m -> m "Redundant domain name in --dhcp-host. Ignoring previous value!");
-          { config with domain_name = Some domain_name })
-      { id = None; nets = []; tags = []; macs = [];
-        ipv4 = None; ipv6 = None; lease_time = None; ignore = false;
-        domain_name = None }
+            if config.ignore then
+              Log.warn (fun m -> m "Redundant 'ignore' in --dhcp-host.");
+            { config with ignore = true }
+        | `Domain_name domain_name ->
+            if Option.is_some config.domain_name then
+              Log.warn (fun m ->
+                  m
+                    "Redundant domain name in --dhcp-host. Ignoring previous \
+                     value!");
+            { config with domain_name = Some domain_name })
+      {
+        id = None;
+        nets = [];
+        tags = [];
+        macs = [];
+        ipv4 = None;
+        ipv6 = None;
+        lease_time = None;
+        ignore = false;
+        domain_name = None;
+      }
       items
   in
   (* Above we reverse the order so let's undo that. *)
   let thing =
-    { thing with
+    {
+      thing with
       nets = List.rev thing.nets;
       tags = List.rev thing.tags;
-      macs = List.rev thing.macs }
+      macs = List.rev thing.macs;
+    }
   in
   return thing
 
