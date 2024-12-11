@@ -94,6 +94,24 @@ type dhcp_range = {
   lease_time : int option;
 }
 
+type dhcp_config = {
+  id : [ `Any_client_id | `Client_id of string ] option;
+  nets : string list;
+  tags : string list;
+  macs : Macaddr.t list;
+  ipv4 : Ipaddr.V4.t option;
+  ipv6 : Ipaddr.V6.t option;
+  lease_time : int option;
+  ignore : bool;
+  (* TODO: [`host] Domain_name.t?! *)
+  domain_name : [`raw ] Domain_name.t option;
+}
+(* the dhcp_config data structure is not great to work with. The fields [id],
+   [nets], [tags] and [macs] are used for matching clients. The fields [ipv4]
+   and [lease_time] are values to assign to matching clients. The [ignore]
+   field says to ignore matching clients making the [ipv4] and [lease_time]
+   fields questionable. *)
+
 let pp_dhcp_range ppf
     { start_addr; end_addr; mode; netmask; broadcast; lease_time } =
   let pp_mode ppf = function
@@ -218,6 +236,7 @@ let dhcp_host end_of_directive =
            | 'a'..'z' | 'A'..'Z' | '0'..'9' | '-' -> Some ()
            | _ -> None))
     >>= fun labels ->
+    (* TODO: refine domain name kind *)
     match Domain_name.of_strings labels with
     | Ok domain -> return (`Domain_name domain)
     | Error `Msg e -> fail (Fmt.str "Invalid domain name: %s: %a" e
@@ -237,7 +256,7 @@ let dhcp_host end_of_directive =
     ]
   in
   sep_by1 (char ',') dhcp_host_item <* end_of_directive >>= fun items ->
-  (* TODO: process items:
+  (* Process items:
      - We can have at most one id thing except and id and id:* whose semantics
        are very unclear. Thus we should probably forbid that combination.
      - For net:/set: we can have as many as we like.
@@ -250,8 +269,41 @@ let dhcp_host end_of_directive =
      The option parser in dnsmasq will not enforce much of this. Instead, the
      last value will overwrite previous values if only one value makes sense.
      We should do better.  *)
-  ignore items;
-  return ()
+  let thing =
+    List.fold_left (fun config item ->
+        match item with
+        | `Any_client_id | `Client_id _ as id ->
+          if Option.is_some config.id then
+            Log.warn (fun m -> m "Redundant id in --dhcp-host. Ignoring previous value!");
+          { config with id = Some id }
+        | `Net net ->
+          { config with nets = net :: config.nets }
+        | `Tag tag ->
+          { config with tags = tag :: config.tags }
+        | `Macaddr mac ->
+          { config with macs = mac :: config.macs }
+        | `Ipv4addr ipv4 ->
+          if Option.is_some config.ipv4 then
+            Log.warn (fun m -> m "Redundant ipv4 in --dhcp-host. Ignoring previous value!");
+          { config with ipv4 = Some ipv4 }
+        | `Lease_time time ->
+          if Option.is_some config.lease_time then
+            Log.warn (fun m -> m "Redundant lease time in --dhcp-host. Ignoring previous value!");
+          { config with lease_time = Some time }
+        | `Ignore ->
+          if config.ignore then
+            Log.warn (fun m -> m "Redundant 'ignore' in --dhcp-host.");
+          { config with ignore = true }
+        | `Domain_name domain_name  ->
+          if Option.is_some config.domain_name then
+            Log.warn (fun m -> m "Redundant domain name in --dhcp-host. Ignoring previous value!");
+          { config with domain_name = Some domain_name })
+      { id = None; nets = []; tags = []; macs = [];
+        ipv4 = None; ipv6 = None; lease_time = None; ignore = false;
+        domain_name = None }
+      items
+  in
+  return thing
 
 let dhcp_range_docv =
   "<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
