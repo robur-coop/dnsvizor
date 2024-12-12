@@ -252,8 +252,8 @@ let dhcp_host end_of_directive =
                in
                match Ohex.decode hex_name with
                | name -> return (`Client_id name)
-               | exception Invalid_argument _ ->
-                   fail (Fmt.str "bad hex constant: %S" name)
+               | exception Invalid_argument e ->
+                   fail (Fmt.str "bad hex constant: %s: %S" e name)
              else return (`Client_id name) );
          ]
   in
