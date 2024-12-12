@@ -333,40 +333,33 @@ let dhcp_host end_of_directive =
      The option parser in dnsmasq will not enforce much of this. Instead, the
      last value will overwrite previous values if only one value makes sense.
      We should do better. *)
-  let thing =
+  let exception Duplicate_item of string in
+  match
     List.fold_left
       (fun config item ->
         match item with
         | (`Any_client_id | `Client_id _) as id ->
             if Option.is_some config.id then
-              Log.warn (fun m ->
-                  m "Redundant id in --dhcp-host. Ignoring previous value!");
+              raise_notrace (Duplicate_item "id:<client_id>");
             { config with id = Some id }
         | `Set set -> { config with sets = set :: config.sets }
         | `Tag tag -> { config with tags = tag :: config.tags }
         | `Macaddr mac -> { config with macs = mac :: config.macs }
         | `Ipv4addr ipv4 ->
             if Option.is_some config.ipv4 then
-              Log.warn (fun m ->
-                  m "Redundant ipv4 in --dhcp-host. Ignoring previous value!");
+              raise_notrace (Duplicate_item "<ipv4>");
             { config with ipv4 = Some ipv4 }
         | `Lease_time time ->
             if Option.is_some config.lease_time then
-              Log.warn (fun m ->
-                  m
-                    "Redundant lease time in --dhcp-host. Ignoring previous \
-                     value!");
+              raise_notrace (Duplicate_item "<lease_time>");
             { config with lease_time = Some time }
         | `Ignore ->
             if config.ignore then
-              Log.warn (fun m -> m "Redundant 'ignore' in --dhcp-host.");
+              Log.warn (fun m -> m "Redundant 'ignore' in dhcp-host.");
             { config with ignore = true }
         | `Domain_name domain_name ->
             if Option.is_some config.domain_name then
-              Log.warn (fun m ->
-                  m
-                    "Redundant domain name in --dhcp-host. Ignoring previous \
-                     value!");
+              raise_notrace (Duplicate_item "<host_name>");
             { config with domain_name = Some domain_name })
       {
         id = None;
@@ -380,17 +373,23 @@ let dhcp_host end_of_directive =
         domain_name = None;
       }
       items
-  in
-  (* Above we reverse the order so let's undo that. *)
-  let thing =
-    {
-      thing with
-      sets = List.rev thing.sets;
-      tags = List.rev thing.tags;
-      macs = List.rev thing.macs;
-    }
-  in
-  return thing
+  with
+  | thing ->
+      (* Above we reverse the order so let's undo that. *)
+      let thing =
+        {
+          thing with
+          sets = List.rev thing.sets;
+          tags = List.rev thing.tags;
+          macs = List.rev thing.macs;
+        }
+      in
+      return thing
+  | exception Duplicate_item what ->
+      Fmt.kstr fail
+        "Duplicate argument %s in dhcp-host. Dnsmasq will accept this and \
+         *silently* ignore any previous values. Remove earlier %s argument(s)."
+        what what
 
 let dhcp_range_docv =
   "<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
