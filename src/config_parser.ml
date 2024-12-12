@@ -94,7 +94,7 @@ type dhcp_range = {
   lease_time : int option;
 }
 
-type dhcp_config = {
+type dhcp_host = {
   id : [ `Any_client_id | `Client_id of string ] option;
   sets : string list;
   tags : string list;
@@ -106,7 +106,7 @@ type dhcp_config = {
   (* TODO: [`host] Domain_name.t?! *)
   domain_name : [ `raw ] Domain_name.t option;
 }
-(* the dhcp_config data structure is not great to work with. The fields [id],
+(* the dhcp_host data structure is not great to work with. The fields [id],
    [sets], [tags] and [macs] are used for matching clients. The fields [ipv4]
    and [lease_time] are values to assign to matching clients. The [ignore]
    field says to ignore matching clients making the [ipv4] and [lease_time]
@@ -138,7 +138,7 @@ let pp_dhcp_range ppf
     Fmt.(option ~none:nop (any "," ++ pp_duration))
     lease_time
 
-let pp_dhcp_config ppf
+let pp_dhcp_host ppf
     { id; sets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name } =
   let sep =
     let use_sep = ref false in
@@ -393,7 +393,7 @@ let dhcp_host_docv =
 let dhcp_host_c =
   conv_cmdliner ~docv:dhcp_range_docv
     (dhcp_host arg_end_of_directive)
-    pp_dhcp_config
+    pp_dhcp_host
 
 let parse_file data =
   let rules =

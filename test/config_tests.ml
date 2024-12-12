@@ -49,7 +49,7 @@ let dhcp_host_t =
     && Bool.equal ignore b.ignore
     && Option.equal Domain_name.equal domain_name b.domain_name
   in
-  Alcotest.testable pp_dhcp_config equal
+  Alcotest.testable pp_dhcp_host equal
 
 let parse_one_arg rule input = parse_one (rule arg_end_of_directive) input
 
@@ -109,14 +109,14 @@ let ok_dhcp_range_static () =
       "DHCP range with static is good" (Ok expected)
       (parse_one_arg dhcp_range input))
 
-let make_dhcp_config ?id ?(sets = []) ?(tags = []) ?(macs = []) ?ipv4 ?ipv6
+let make_dhcp_host ?id ?(sets = []) ?(tags = []) ?(macs = []) ?ipv4 ?ipv6
     ?lease_time ?(ignore = false) ?domain_name () =
   { id; sets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name }
 
 let ok_dhcp_host_thedoctor () =
   let input = "00:00:5e:00:53:42,thedoctor,192.168.0.10" in
   let expected =
-    make_dhcp_config
+    make_dhcp_host
       ~macs:[ Macaddr.of_string_exn "00:00:5e:00:53:42" ]
       ~domain_name:(Domain_name.of_string_exn "thedoctor")
       ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.10")
@@ -129,7 +129,7 @@ let ok_dhcp_host_thedoctor () =
 let ok_dhcp_host_tardis () =
   let input = "00:00:5e:00:53:01,00:00:5e:00:53:02,tardis,192.168.0.22" in
   let expected =
-    make_dhcp_config
+    make_dhcp_host
       ~macs:
         Macaddr.
           [
@@ -146,7 +146,7 @@ let ok_dhcp_host_tardis () =
 let ok_dhcp_host_sonicscrewdriver () =
   let input = "00:00:5e:00:53:08,sonicscrewdriver,192.168.0.23" in
   let expected =
-    make_dhcp_config
+    make_dhcp_host
       ~macs:[ Macaddr.of_string_exn "00:00:5e:00:53:08" ]
       ~domain_name:(Domain_name.of_string_exn "sonicscrewdriver")
       ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.23")
@@ -159,7 +159,7 @@ let ok_dhcp_host_sonicscrewdriver () =
 let ok_dhcp_host_apollon () =
   let input = "52:54:00:42:6a:43,apollon,10.10.10.51,infinite" in
   let expected =
-    make_dhcp_config
+    make_dhcp_host
       ~macs:[ Macaddr.of_string_exn "52:54:00:42:6a:43" ]
       ~domain_name:(Domain_name.of_string_exn "apollon")
       ~ipv4:(Ipaddr.V4.of_string_exn "10.10.10.51")
@@ -183,26 +183,26 @@ let ok_dhcp_host_dnsmasq_conf_example =
     [
       ( "First dhcp-host from dnsmasq.conf.example",
         "11:22:33:44:55:66,192.168.0.60",
-        make_dhcp_config
+        make_dhcp_host
           ~macs:[ Macaddr.of_string_exn "11:22:33:44:55:66" ]
           ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.60")
           () );
       ( "Second dhcp-host from dnsmasq.conf.example",
         "11:22:33:44:55:66,fred",
-        make_dhcp_config
+        make_dhcp_host
           ~macs:[ Macaddr.of_string_exn "11:22:33:44:55:66" ]
           ~domain_name:(Domain_name.of_string_exn "fred")
           () );
       ( "Third dhcp-host from dnsmasq.conf.example",
         "11:22:33:44:55:66,fred,192.168.0.60,45m",
-        make_dhcp_config
+        make_dhcp_host
           ~macs:[ Macaddr.of_string_exn "11:22:33:44:55:66" ]
           ~domain_name:(Domain_name.of_string_exn "fred")
           ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.60")
           ~lease_time:(45 * 60) () );
       ( "Fourth dhcp-host from dnsmasq.conf.example",
         "11:22:33:44:55:66,12:34:56:78:90:12,192.168.0.60",
-        make_dhcp_config
+        make_dhcp_host
           ~macs:
             Macaddr.
               [
@@ -213,37 +213,37 @@ let ok_dhcp_host_dnsmasq_conf_example =
           () );
       ( "Fifth dhcp-host from dnsmasq.conf.example",
         "bert,192.168.0.70,infinite",
-        make_dhcp_config
+        make_dhcp_host
           ~domain_name:(Domain_name.of_string_exn "bert")
           ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.70")
           ~lease_time:(1 lsl 32) () );
       ( "Sixth dhcp-host from dnsmasq.conf.example",
         "id:01:02:02:04,192.168.0.60",
-        make_dhcp_config ~id:(`Client_id "\x01\x02\x02\x04")
+        make_dhcp_host ~id:(`Client_id "\x01\x02\x02\x04")
           ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.60")
           () );
       (* skipping seventh as it's similar to above, but is infiniband in a manner we wouldn't care about *)
       ( "Eigth dhcp-host from dnsmasq.conf.example",
         "id:marjorie,192.168.0.60",
-        make_dhcp_config ~id:(`Client_id "marjorie")
+        make_dhcp_host ~id:(`Client_id "marjorie")
           ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.60")
           () );
       ( "Ninth dhcp-host from dnsmasq.conf.example",
         "judge",
-        make_dhcp_config ~domain_name:(Domain_name.of_string_exn "judge") () );
+        make_dhcp_host ~domain_name:(Domain_name.of_string_exn "judge") () );
       ( "Tenth dhcp-host from dnsmasq.conf.example",
         "11:22:33:44:55:66,ignore",
-        make_dhcp_config
+        make_dhcp_host
           ~macs:[ Macaddr.of_string_exn "11:22:33:44:55:66" ]
           ~ignore:true () );
       ( "Eleventh dhcp-host from dnsmasq.conf.example",
         "11:22:33:44:55:66,id:*",
-        make_dhcp_config ~id:`Any_client_id
+        make_dhcp_host ~id:`Any_client_id
           ~macs:[ Macaddr.of_string_exn "11:22:33:44:55:66" ]
           () );
       ( "Twelvth dhcp-host from dnsmasq.conf.example",
         "11:22:33:44:55:66,set:red",
-        make_dhcp_config
+        make_dhcp_host
           ~macs:[ Macaddr.of_string_exn "11:22:33:44:55:66" ]
           ~sets:[ "red" ] () );
       (* TODO:
