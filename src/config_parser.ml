@@ -243,6 +243,7 @@ let dhcp_host end_of_directive =
            (* FIXME: probably be more precise in accepted characters *)
            ( scan false (fun is_hex -> function
                | ',' -> None | ':' -> Some true | _ -> Some is_hex)
+           <* commit
            >>= fun (name, is_hex) ->
              if is_hex then
                (* This is not very smart *)
@@ -251,7 +252,8 @@ let dhcp_host end_of_directive =
                in
                match Ohex.decode hex_name with
                | name -> return (`Client_id name)
-               | exception Invalid_argument _ -> fail "bad hex constant"
+               | exception Invalid_argument _ ->
+                   fail (Fmt.str "bad hex constant: %S" name)
              else return (`Client_id name) );
          ]
   in
