@@ -94,19 +94,39 @@ type dhcp_range = {
   lease_time : int option;
 }
 
+type dhcp_host = {
+  id : [ `Any_client_id | `Client_id of string ] option;
+  sets : string list;
+  tags : string list;
+  macs : Macaddr.t list;
+  ipv4 : Ipaddr.V4.t option;
+  ipv6 : Ipaddr.V6.t option;
+  lease_time : int option;
+  ignore : bool;
+  (* TODO: [`host] Domain_name.t?! *)
+  domain_name : [ `raw ] Domain_name.t option;
+}
+(* the dhcp_host data structure is not great to work with. The fields [id],
+   and [macs] are used for matching clients DHCPREQUEST. The [tags] field is
+   matched internally to add more dhcp options in the DHCPREPLY. The fields
+   [ipv4] and [lease_time] are values to assign to matching clients. The [sets]
+   field is used to internally assign tags to matching clients. The [ignore]
+   field says to ignore matching clients making the [ipv4] and [lease_time]
+   fields questionable. *)
+
+let pp_duration ppf = function
+  | x when x = infinite -> Fmt.string ppf "infinite"
+  | x when x mod week = 0 -> Fmt.pf ppf "%uw" (x / week)
+  | x when x mod day = 0 -> Fmt.pf ppf "%ud" (x / day)
+  | x when x mod hour = 0 -> Fmt.pf ppf "%uh" (x / hour)
+  | x when x mod minute = 0 -> Fmt.pf ppf "%um" (x / minute)
+  | x -> Fmt.pf ppf "%u" x
+
 let pp_dhcp_range ppf
     { start_addr; end_addr; mode; netmask; broadcast; lease_time } =
   let pp_mode ppf = function
     | `Static -> Fmt.string ppf "static"
     | `Proxy -> Fmt.string ppf "proxy"
-  in
-  let pp_duration ppf = function
-    | x when x = infinite -> Fmt.string ppf "infinite"
-    | x when x mod week = 0 -> Fmt.pf ppf "%uw" (x / week)
-    | x when x mod day = 0 -> Fmt.pf ppf "%ud" (x / day)
-    | x when x mod hour = 0 -> Fmt.pf ppf "%uh" (x / hour)
-    | x when x mod minute = 0 -> Fmt.pf ppf "%um" (x / minute)
-    | x -> Fmt.pf ppf "%u" x
   in
   Fmt.pf ppf "%a%a%a%a%a%a" Ipaddr.V4.pp start_addr
     Fmt.(option ~none:nop (any "," ++ Ipaddr.V4.pp))
@@ -119,6 +139,62 @@ let pp_dhcp_range ppf
     broadcast
     Fmt.(option ~none:nop (any "," ++ pp_duration))
     lease_time
+
+let pp_dhcp_host ppf
+    { id; sets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name } =
+  let sep =
+    let use_sep = ref false in
+    fun () ->
+      if !use_sep then Fmt.pf ppf ",";
+      use_sep := true
+  in
+  List.iter
+    (fun mac ->
+      sep ();
+      Macaddr.pp ppf mac)
+    macs;
+  Option.iter
+    (fun id ->
+      sep ();
+      match id with
+      | `Any_client_id -> Fmt.pf ppf "id:*"
+      | `Client_id id ->
+          (* TODO: use hex when text is inappropriate *)
+          Fmt.pf ppf "id:%s" id)
+    id;
+  List.iter
+    (fun set ->
+      sep ();
+      Fmt.pf ppf "set:%s" set)
+    sets;
+  List.iter
+    (fun tag ->
+      sep ();
+      Fmt.pf ppf "tag:%s" tag)
+    tags;
+  Option.iter
+    (fun ipv4 ->
+      sep ();
+      Ipaddr.V4.pp ppf ipv4)
+    ipv4;
+  Option.iter
+    (fun ipv6 ->
+      sep ();
+      Ipaddr.V6.pp ppf ipv6)
+    ipv6;
+  Option.iter
+    (fun domain_name ->
+      sep ();
+      Domain_name.pp ppf domain_name)
+    domain_name;
+  Option.iter
+    (fun lease_time ->
+      sep ();
+      pp_duration ppf lease_time)
+    lease_time;
+  if ignore then (
+    sep ();
+    Fmt.pf ppf "ignore")
 
 let mode =
   choice
@@ -152,6 +228,169 @@ let dhcp_range end_of_directive =
   let netmask, broadcast = net_broad in
   { start_addr; end_addr; mode; netmask; broadcast; lease_time }
 
+let dhcp_host end_of_directive =
+  let until_comma =
+    scan_string () (fun () c ->
+        (* FIXME: probably be more precise in accepted characters *)
+        match c with ',' -> None | _ -> Some ())
+  in
+  let lease_time = lease_time >>| fun lease -> `Lease_time lease in
+  let id_thing =
+    string_ci "id:" *> commit
+    *> choice ~failure_msg:"Bad id thing"
+         [
+           char '*' *> return `Any_client_id;
+           (* FIXME: probably be more precise in accepted characters *)
+           ( scan false (fun is_hex -> function
+               | ',' -> None | ':' -> Some true | _ -> Some is_hex)
+           <* commit
+           >>= fun (name, is_hex) ->
+             if is_hex then
+               (* This is not very smart *)
+               let hex_name =
+                 String.concat "" (String.split_on_char ':' name)
+               in
+               match Ohex.decode hex_name with
+               | name -> return (`Client_id name)
+               | exception Invalid_argument e ->
+                   fail (Fmt.str "bad hex constant: %s: %S" e name)
+             else return (`Client_id name) );
+         ]
+  in
+  let net_set_thing =
+    choice
+      [
+        string "net:" *> commit
+        *> fail "Using 'net:' is unsupported; use 'set:' instead.";
+        string "set:";
+      ]
+    *> commit *> until_comma
+    >>| fun set -> `Set set
+  in
+  let tag_thing =
+    string "tag:" *> commit *> until_comma >>| fun tag -> `Tag tag
+  in
+  let mac_addr =
+    (* NOTE: ocaml-tcpip only supports mac addresses of 6 bytes so let's not
+       try to parse mac addresses for exotic hardware. We will allow ethernet
+       (10 Mb) mac type only. *)
+    (* TODO: wildcards *)
+    let ishex = function
+      | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true
+      | _ -> false
+    in
+    option "" (string "1-") *> peek_string 3 >>= fun first ->
+    if ishex first.[0] && ishex first.[1] && first.[2] = ':' then
+      commit *> take ((6 * 2) + 5) >>= fun mac ->
+      match Macaddr.of_string mac with
+      | Ok mac -> return (`Macaddr mac)
+      | Error (`Msg e) -> fail (Fmt.str "Invalid MAC address: %s: %S" e mac)
+    else fail "not a mac address"
+  in
+  let ipv4_addr = ipv4_dotted >>| fun ip -> `Ipv4addr ip in
+  let ignore_thing = string "ignore" *> return `Ignore in
+  let hostname =
+    sep_by1 (char '.')
+      (scan_string () (fun () c ->
+           match c with
+           | 'a' .. 'z' | 'A' .. 'Z' | '0' .. '9' | '-' -> Some ()
+           | _ -> None))
+    >>= fun labels ->
+    (* TODO: refine domain name kind *)
+    match Domain_name.of_strings labels with
+    | Ok domain -> return (`Domain_name domain)
+    | Error (`Msg e) ->
+        fail
+          (Fmt.str "Invalid domain name: %s: %a" e
+             Fmt.(list ~sep:(any ".") string)
+             labels)
+  in
+  let dhcp_host_item =
+    choice ~failure_msg:"Bad dhcp-host argument"
+      [
+        id_thing;
+        net_set_thing;
+        tag_thing;
+        mac_addr;
+        ipv4_addr;
+        (* TODO: ipv6_addr ; *)
+        lease_time;
+        ignore_thing;
+        hostname;
+      ]
+  in
+  sep_by1 (char ',') dhcp_host_item <* end_of_directive >>= fun items ->
+  (* Process items:
+     - We can have at most one id thing except and id and id:* whose semantics
+       are very unclear. Thus we should probably forbid that combination.
+     - For net:/set: we can have as many as we like.
+     - We can as well have as many tag: as we like.
+     - There is also no limit on mac addresses.
+     - There can be at most one ipv4 address.
+     - There can be at most one lease time.
+     - The ignore thing will set a flag. Repeating it is redundant if harmless.
+     - There can be at most one domain name.
+     The option parser in dnsmasq will not enforce much of this. Instead, the
+     last value will overwrite previous values if only one value makes sense.
+     We should do better. *)
+  let exception Duplicate_item of string in
+  match
+    List.fold_left
+      (fun config item ->
+        match item with
+        | (`Any_client_id | `Client_id _) as id ->
+            if Option.is_some config.id then
+              raise_notrace (Duplicate_item "id:<client_id>");
+            { config with id = Some id }
+        | `Set set -> { config with sets = set :: config.sets }
+        | `Tag tag -> { config with tags = tag :: config.tags }
+        | `Macaddr mac -> { config with macs = mac :: config.macs }
+        | `Ipv4addr ipv4 ->
+            if Option.is_some config.ipv4 then
+              raise_notrace (Duplicate_item "<ipv4>");
+            { config with ipv4 = Some ipv4 }
+        | `Lease_time time ->
+            if Option.is_some config.lease_time then
+              raise_notrace (Duplicate_item "<lease_time>");
+            { config with lease_time = Some time }
+        | `Ignore ->
+            if config.ignore then
+              Log.warn (fun m -> m "Redundant 'ignore' in dhcp-host.");
+            { config with ignore = true }
+        | `Domain_name domain_name ->
+            if Option.is_some config.domain_name then
+              raise_notrace (Duplicate_item "<host_name>");
+            { config with domain_name = Some domain_name })
+      {
+        id = None;
+        sets = [];
+        tags = [];
+        macs = [];
+        ipv4 = None;
+        ipv6 = None;
+        lease_time = None;
+        ignore = false;
+        domain_name = None;
+      }
+      items
+  with
+  | thing ->
+      (* Above we reverse the order so let's undo that. *)
+      let thing =
+        {
+          thing with
+          sets = List.rev thing.sets;
+          tags = List.rev thing.tags;
+          macs = List.rev thing.macs;
+        }
+      in
+      return thing
+  | exception Duplicate_item what ->
+      Fmt.kstr fail
+        "Duplicate argument %s in dhcp-host. Dnsmasq will accept this and \
+         *silently* ignore any previous values. Remove earlier %s argument(s)."
+        what what
+
 let dhcp_range_docv =
   "<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
 
@@ -159,6 +398,14 @@ let dhcp_range_c =
   conv_cmdliner ~docv:dhcp_range_docv
     (dhcp_range arg_end_of_directive)
     pp_dhcp_range
+
+let dhcp_host_docv =
+  "[<hwaddr>][,id:<client_id>|*][,set:<tag>][,tag:<tag>][,<ipaddr>][,<host‐name>][,<lease_time>][,ignore]"
+
+let dhcp_host_c =
+  conv_cmdliner ~docv:dhcp_range_docv
+    (dhcp_host arg_end_of_directive)
+    pp_dhcp_host
 
 let parse_file data =
   let rules =

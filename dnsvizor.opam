@@ -25,6 +25,7 @@ depends: [
   "ipaddr" {>= "5.6.0"}
   "cmdliner" {>= "1.2.0"}
   "logs" {>= "0.7.0"}
+  "ohex" {>= "0.2.0"}
 
   "alcotest" {with-test & >= "1.8.0"}
 ]
