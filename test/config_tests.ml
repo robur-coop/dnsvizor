@@ -157,10 +157,10 @@ let ok_dhcp_host_sonicscrewdriver () =
     (parse_one_arg dhcp_host input)
 
 let ok_dhcp_host_apollon () =
-  let input = "52:54:00:42:6a:43,apollon,10.10.10.51,infinite" in
+  let input = "a2:54:00:42:6a:43,apollon,10.10.10.51,infinite" in
   let expected =
     make_dhcp_host
-      ~macs:[ Macaddr.of_string_exn "52:54:00:42:6a:43" ]
+      ~macs:[ Macaddr.of_string_exn "a2:54:00:42:6a:43" ]
       ~domain_name:(Domain_name.of_string_exn "apollon")
       ~ipv4:(Ipaddr.V4.of_string_exn "10.10.10.51")
       ~lease_time:(1 lsl 32) (* infinite *)
