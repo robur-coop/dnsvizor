@@ -256,7 +256,13 @@ let dhcp_host end_of_directive =
          ]
   in
   let net_set_thing =
-    choice [ string "net:"; string "set:" ] *> commit *> until_comma
+    choice
+      [
+        string "net:" *> commit
+        *> fail "Using 'net:' is unsupported; use 'set:' instead.";
+        string "set:";
+      ]
+    *> commit *> until_comma
     >>| fun set -> `Set set
   in
   let tag_thing =
