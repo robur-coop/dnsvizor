@@ -135,8 +135,8 @@ struct
           | Dhcp_server.Input.Update leases ->
               t.dhcp_leases <- leases;
               Logs.debug (fun m ->
-                  m "Received packet %s - updated lease database"
-                    (Dhcp_wire.pkt_to_string pkt));
+                  m "Received packet %a - updated lease database"
+                    Dhcp_wire.pp_pkt pkt);
               Lwt.return_unit
           | Dhcp_server.Input.Warning w ->
               Logs.warn (fun m -> m "%s" w);
@@ -147,13 +147,13 @@ struct
           | Dhcp_server.Input.Reply (reply, leases) ->
               t.dhcp_leases <- leases;
               Logs.debug (fun m ->
-                  m "Received packet %s" (Dhcp_wire.pkt_to_string pkt));
+                  m "Received packet %a" Dhcp_wire.pp_pkt pkt);
               N.write t.net
                 ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet)
                 (Dhcp_wire.pkt_into_buf reply)
               >|= fun _ ->
               Logs.debug (fun m ->
-                  m "Sent reply packet %s" (Dhcp_wire.pkt_to_string reply)))
+                  m "Sent reply packet %a" Dhcp_wire.pp_pkt reply))
 
     let listen t ~header_size net =
       let dhcp_or_not buf =
