@@ -266,7 +266,10 @@ let dhcp_host end_of_directive =
        try to parse mac addresses for exotic hardware. We will allow ethernet
        (10 Mb) mac type only. *)
     (* TODO: wildcards *)
-    let ishex = function '0' .. '9' | 'a'..'f' | 'A'..'F' -> true | _ -> false in
+    let ishex = function
+      | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true
+      | _ -> false
+    in
     option "" (string "1-") *> peek_string 3 >>= fun first ->
     if ishex first.[0] && ishex first.[1] && first.[2] = ':' then
       commit *> take ((6 * 2) + 5) >>= fun mac ->
