@@ -96,7 +96,7 @@ type dhcp_range = {
 
 type dhcp_config = {
   id : [ `Any_client_id | `Client_id of string ] option;
-  nets : string list;
+  sets : string list;
   tags : string list;
   macs : Macaddr.t list;
   ipv4 : Ipaddr.V4.t option;
@@ -107,7 +107,7 @@ type dhcp_config = {
   domain_name : [ `raw ] Domain_name.t option;
 }
 (* the dhcp_config data structure is not great to work with. The fields [id],
-   [nets], [tags] and [macs] are used for matching clients. The fields [ipv4]
+   [sets], [tags] and [macs] are used for matching clients. The fields [ipv4]
    and [lease_time] are values to assign to matching clients. The [ignore]
    field says to ignore matching clients making the [ipv4] and [lease_time]
    fields questionable. *)
@@ -139,7 +139,7 @@ let pp_dhcp_range ppf
     lease_time
 
 let pp_dhcp_config ppf
-    { id; nets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name } =
+    { id; sets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name } =
   let sep =
     let use_sep = ref false in
     fun () ->
@@ -161,10 +161,10 @@ let pp_dhcp_config ppf
           Fmt.pf ppf "id:%s" id)
     id;
   List.iter
-    (fun net ->
+    (fun set ->
       sep ();
-      Fmt.pf ppf "net:%s" net)
-    nets;
+      Fmt.pf ppf "set:%s" set)
+    sets;
   List.iter
     (fun tag ->
       sep ();
@@ -255,7 +255,7 @@ let dhcp_host end_of_directive =
   in
   let net_set_thing =
     choice [ string "net:"; string "set:" ] *> commit *> until_comma
-    >>| fun net -> `Net net
+    >>| fun set -> `Set set
   in
   let tag_thing =
     string "tag:" *> commit *> until_comma >>| fun tag -> `Tag tag
@@ -329,7 +329,7 @@ let dhcp_host end_of_directive =
               Log.warn (fun m ->
                   m "Redundant id in --dhcp-host. Ignoring previous value!");
             { config with id = Some id }
-        | `Net net -> { config with nets = net :: config.nets }
+        | `Set set -> { config with sets = set :: config.sets }
         | `Tag tag -> { config with tags = tag :: config.tags }
         | `Macaddr mac -> { config with macs = mac :: config.macs }
         | `Ipv4addr ipv4 ->
@@ -357,7 +357,7 @@ let dhcp_host end_of_directive =
             { config with domain_name = Some domain_name })
       {
         id = None;
-        nets = [];
+        sets = [];
         tags = [];
         macs = [];
         ipv4 = None;
@@ -372,7 +372,7 @@ let dhcp_host end_of_directive =
   let thing =
     {
       thing with
-      nets = List.rev thing.nets;
+      sets = List.rev thing.sets;
       tags = List.rev thing.tags;
       macs = List.rev thing.macs;
     }

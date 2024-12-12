@@ -32,7 +32,7 @@ let dhcp_range_t =
 
 let dhcp_host_t =
   let equal
-      { id; nets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name } b =
+      { id; sets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name } b =
     Option.equal
       (fun id id' ->
         match (id, id') with
@@ -40,7 +40,7 @@ let dhcp_host_t =
         | `Client_id id, `Client_id id' -> String.equal id id'
         | `Any_client_id, `Client_id _ | `Client_id _, `Any_client_id -> false)
       id b.id
-    && List.equal String.equal nets b.nets
+    && List.equal String.equal sets b.sets
     && List.equal String.equal tags b.tags
     && List.equal mac_eq macs b.macs
     && Option.equal ipv4_eq ipv4 b.ipv4
@@ -109,9 +109,9 @@ let ok_dhcp_range_static () =
       "DHCP range with static is good" (Ok expected)
       (parse_one_arg dhcp_range input))
 
-let make_dhcp_config ?id ?(nets = []) ?(tags = []) ?(macs = []) ?ipv4 ?ipv6
+let make_dhcp_config ?id ?(sets = []) ?(tags = []) ?(macs = []) ?ipv4 ?ipv6
     ?lease_time ?(ignore = false) ?domain_name () =
-  { id; nets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name }
+  { id; sets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name }
 
 let ok_dhcp_host_thedoctor () =
   let input = "00:00:5e:00:53:42,thedoctor,192.168.0.10" in
@@ -245,7 +245,7 @@ let ok_dhcp_host_dnsmasq_conf_example =
         "11:22:33:44:55:66,set:red",
         make_dhcp_config
           ~macs:[ Macaddr.of_string_exn "11:22:33:44:55:66" ]
-          ~nets:[ "red" ] () );
+          ~sets:[ "red" ] () );
       (* TODO:
          ("Thirteenth dhcp-host from dnsmasq.conf.example",
            "11:22:33:*:*:*,set:red",
