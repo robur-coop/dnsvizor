@@ -146,8 +146,7 @@ struct
               Lwt.return_unit
           | Dhcp_server.Input.Reply (reply, leases) ->
               t.dhcp_leases <- leases;
-              Logs.debug (fun m ->
-                  m "Received packet %a" Dhcp_wire.pp_pkt pkt);
+              Logs.debug (fun m -> m "Received packet %a" Dhcp_wire.pp_pkt pkt);
               N.write t.net
                 ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet)
                 (Dhcp_wire.pkt_into_buf reply)
