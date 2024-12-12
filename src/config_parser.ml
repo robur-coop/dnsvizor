@@ -107,10 +107,11 @@ type dhcp_host = {
   domain_name : [ `raw ] Domain_name.t option;
 }
 (* the dhcp_host data structure is not great to work with. The fields [id],
-   [sets], [tags] and [macs] are used for matching clients. The fields [ipv4]
-   and [lease_time] are values to assign to matching clients. The [ignore]
-   field says to ignore matching clients making the [ipv4] and [lease_time]
-   fields questionable. *)
+   [tags] and [macs] are used for matching clients. The fields [ipv4] and
+   [lease_time] are values to assign to matching clients. The [sets] field is
+   used to internally assign tags to matching clients. The [ignore] field says
+   to ignore matching clients making the [ipv4] and [lease_time] fields
+   questionable. *)
 
 let pp_duration ppf = function
   | x when x = infinite -> Fmt.string ppf "infinite"
