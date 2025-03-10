@@ -1,5 +1,4 @@
-(* mirage >= 4.8.0 & < 4.9.0 *)
-
+(* mirage >= 4.9.0 & < 4.10.0 *)
 (* Copyright Robur, 2020 *)
 
 open Mirage
@@ -28,8 +27,7 @@ let dnsvizor =
       package ~min:"4.5.0" ~sublibs:[ "network" ] "mirage-runtime";
     ]
   in
-  main ~packages "Unikernel.Main"
-    (random @-> pclock @-> mclock @-> time @-> network @-> job)
+  main ~packages "Unikernel.Main" (network @-> job)
 
 (* this works around the [default_network] on Unix brings a --interface runtime
    argument that collides with dnsmasq arguments *)
@@ -39,9 +37,4 @@ let mynetwork =
     [ (`Unix, netif ~group:"unix" "tap0") ]
     ~default:default_network
 
-let () =
-  register "dnsvizor"
-    [
-      dnsvizor $ default_random $ default_posix_clock $ default_monotonic_clock
-      $ default_time $ mynetwork;
-    ]
+let () = register "dnsvizor" [ dnsvizor $ mynetwork ]
