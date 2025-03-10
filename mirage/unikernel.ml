@@ -95,13 +95,7 @@ module K = struct
     Mirage_runtime.register_arg Arg.(value & flag doc)
 end
 
-module Main
-    (R : Mirage_crypto_rng_mirage.S)
-    (P : Mirage_clock.PCLOCK)
-    (M : Mirage_clock.MCLOCK)
-    (Time : Mirage_time.S)
-    (N : Mirage_net.S) =
-struct
+module Main (N : Mirage_net.S) = struct
   module Net = struct
     (* A Mirage_net.S implementation which diverts DHCP messages to a DHCP
        server. The DHCP server needs to get the entire Ethernet frame, because
@@ -129,7 +123,7 @@ struct
           Logs.err (fun m -> m "Can't parse packet: %s" e);
           Lwt.return_unit
       | Ok pkt -> (
-          let now = M.elapsed_ns () |> Duration.to_sec |> Int32.of_int in
+          let now = Mirage_mtime.elapsed_ns () |> Duration.to_sec |> Int32.of_int in
           match Dhcp_server.Input.input_pkt config t.dhcp_leases pkt now with
           | Dhcp_server.Input.Silence -> Lwt.return_unit
           | Dhcp_server.Input.Update leases ->
@@ -186,23 +180,21 @@ struct
   end
 
   module ETH = Ethernet.Make (Net)
-  module ARP = Arp.Make (ETH) (Time)
-  module IPV4 = Static_ipv4.Make (R) (M) (ETH) (ARP)
-  module IPV6 = Ipv6.Make (Net) (ETH) (R) (Time) (M)
+  module ARP = Arp.Make (ETH)
+  module IPV4 = Static_ipv4.Make (ETH) (ARP)
+  module IPV6 = Ipv6.Make (Net) (ETH)
   module IPV4V6 = Tcpip_stack_direct.IPV4V6 (IPV4) (IPV6)
   module ICMP = Icmpv4.Make (IPV4)
-  module UDP = Udp.Make (IPV4V6) (R)
-  module TCP = Tcp.Flow.Make (IPV4V6) (Time) (M) (R)
+  module UDP = Udp.Make (IPV4V6)
+  module TCP = Tcp.Flow.Make (IPV4V6)
 
   module S =
-    Tcpip_stack_direct.MakeV4V6 (Time) (R) (Net) (ETH) (ARP) (IPV4V6) (ICMP)
-      (UDP)
-      (TCP)
+    Tcpip_stack_direct.MakeV4V6 (Net) (ETH) (ARP) (IPV4V6) (ICMP) (UDP) (TCP)
 
-  module Resolver = Dns_resolver_mirage.Make (R) (P) (M) (Time) (S)
-  module Stub = Dns_stub_mirage.Make (R) (Time) (P) (M) (S)
+  module Resolver = Dns_resolver_mirage.Make (S)
+  module Stub = Dns_stub_mirage.Make (S)
 
-  let start () () () () net =
+  let start net =
     (match K.dhcp_range () with
     | None -> ()
     | Some x ->
@@ -271,7 +263,7 @@ struct
         Logs.info (fun m -> m "using a recursive resolver");
         let resolver =
           Dns_resolver.create ?cache_size:(K.dns_cache ()) ~dnssec:false
-            (M.elapsed_ns ()) R.generate primary_t
+            (Mirage_mtime.elapsed_ns ()) Mirage_crypto_rng.generate primary_t
         in
         Resolver.resolver stack ~root:true resolver;
         Lwt.return_unit
