@@ -123,7 +123,9 @@ module Main (N : Mirage_net.S) = struct
           Logs.err (fun m -> m "Can't parse packet: %s" e);
           Lwt.return_unit
       | Ok pkt -> (
-          let now = Mirage_mtime.elapsed_ns () |> Duration.to_sec |> Int32.of_int in
+          let now =
+            Mirage_mtime.elapsed_ns () |> Duration.to_sec |> Int32.of_int
+          in
           match Dhcp_server.Input.input_pkt config t.dhcp_leases pkt now with
           | Dhcp_server.Input.Silence -> Lwt.return_unit
           | Dhcp_server.Input.Update leases ->
@@ -263,7 +265,8 @@ module Main (N : Mirage_net.S) = struct
         Logs.info (fun m -> m "using a recursive resolver");
         let resolver =
           Dns_resolver.create ?cache_size:(K.dns_cache ()) ~dnssec:false
-            (Mirage_mtime.elapsed_ns ()) Mirage_crypto_rng.generate primary_t
+            (Mirage_mtime.elapsed_ns ())
+            Mirage_crypto_rng.generate primary_t
         in
         Resolver.resolver stack ~root:true resolver;
         Lwt.return_unit

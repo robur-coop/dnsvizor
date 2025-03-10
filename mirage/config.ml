@@ -37,5 +37,4 @@ let mynetwork =
     [ (`Unix, netif ~group:"unix" "tap0") ]
     ~default:default_network
 
-let () =
-  register "dnsvizor" [ dnsvizor $ mynetwork; ]
+let () = register "dnsvizor" [ dnsvizor $ mynetwork ]
