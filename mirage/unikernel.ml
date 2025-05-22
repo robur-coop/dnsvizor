@@ -1,5 +1,64 @@
 open Lwt.Infix
 
+module CA = struct
+  open Rresult
+
+  let prefix =
+    X509.Distinguished_name.
+      [ Relative_distinguished_name.singleton (CN "DNSvizor") ]
+
+  let cacert_dn =
+    X509.Distinguished_name.(
+      prefix
+      @ [
+          Relative_distinguished_name.singleton (CN "Ephemeral CA for DNSvizor")
+        ])
+
+  let cacert_lifetime = Ptime.Span.v (365, 0L)
+  let _10s = Ptime.Span.of_int_s 10
+
+  let make domain_name seed =
+    Domain_name.of_string domain_name >>= Domain_name.host
+    >>= fun domain_name ->
+    let private_key =
+      let seed = Base64.decode_exn ~pad:false seed in
+      let g = Mirage_crypto_rng.(create ~seed (module Fortuna)) in
+      Mirage_crypto_pk.Rsa.generate ~g ~bits:2048 ()
+    in
+    let valid_from =
+      Option.get Ptime.(sub_span (Mirage_ptime.now ()) _10s)
+    in
+    Ptime.add_span valid_from cacert_lifetime
+    |> Option.to_result ~none:(R.msgf "End time out of range")
+    >>= fun valid_until ->
+    X509.Signing_request.create cacert_dn (`RSA private_key) >>= fun ca_csr ->
+    let extensions =
+      let open X509.Extension in
+      let key_id =
+        X509.Public_key.id X509.Signing_request.((info ca_csr).public_key)
+      in
+      empty
+      |> add Subject_alt_name
+           ( true
+           , X509.General_name.(
+               singleton DNS [ Domain_name.to_string domain_name ]) )
+      |> add Basic_constraints (true, (false, None))
+      |> add Key_usage
+           (true, [ `Digital_signature; `Content_commitment; `Key_encipherment ])
+      |> add Subject_key_id (false, key_id)
+    in
+    X509.Signing_request.sign ~valid_from ~valid_until ~extensions ca_csr
+      (`RSA private_key) cacert_dn
+    |> R.reword_error (R.msgf "%a" X509.Validation.pp_signature_error)
+    >>= fun certificate ->
+    let fingerprint = X509.Certificate.fingerprint `SHA256 certificate in
+    let time () = Some (Mirage_ptime.now ()) in
+    let authenticator =
+      X509.Authenticator.cert_fingerprint ~time ~hash:`SHA256 ~fingerprint
+    in
+    Ok (certificate, `RSA private_key, authenticator)
+end
+
 module K = struct
   open Cmdliner
   open Dnsvizor
@@ -93,6 +152,12 @@ module K = struct
         [ "bind_interfaces" ]
     in
     Mirage_runtime.register_arg Arg.(value & flag doc)
+
+  let https_port =
+    let doc = 
+      Arg.info ~docs:Manpage.s_none ~doc:"The HTTPS port."
+      [ "https-port" ] in
+    Mirage_runtime.register_arg Arg.(value & opt int 443 & doc)
 end
 
 module Main (N : Mirage_net.S) = struct
@@ -195,6 +260,70 @@ module Main (N : Mirage_net.S) = struct
 
   module Resolver = Dns_resolver_mirage.Make (S)
   module Stub = Dns_stub_mirage.Make (S)
+  module HTTP = Paf_mirage.Make (TCP)
+
+  module DNS_over_HTTP = struct
+    let pp_error ppf = function
+      | `Bad_gateway -> Fmt.string ppf "Bad gateway"
+      | `Bad_request -> Fmt.string ppf "Bad request"
+      | `Exn exn -> Fmt.pf ppf "Exception: %s" (Printexc.to_string exn)
+      | `Internal_server_error -> Fmt.string ppf "Internal server error"
+
+     let error
+       : type reqd headers request response ro wo.
+         (Ipaddr.t * int) -> (reqd, headers, request, response, ro, wo) Alpn.protocol ->
+         ?request:request -> Alpn.server_error -> (headers -> wo) -> unit
+       = fun (ipaddr, port) protocol ?request:_ err _writer ->
+       match protocol with
+       | Alpn.HTTP_1_1 _ -> assert false
+       | Alpn.H2 _ ->
+         Logs.err (fun m -> m "Got an error from %a:%d: %a"
+           Ipaddr.pp ipaddr port pp_error err)
+
+    let request
+      : type reqd headers request response ro wo.
+        _ -> HTTP.TLS.flow -> (Ipaddr.t * int) -> reqd -> (reqd, headers, request, response, ro, wo) Alpn.protocol -> unit
+      = fun resolver flow (dst, port) reqd protocol ->
+      match protocol with
+      | Alpn.HTTP_1_1 _ -> assert false
+      | Alpn.H2 (module Reqd) ->
+        Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
+        let request = Reqd.request reqd in
+        Logs.info (fun m -> m "%a %s" H2.Method.pp_hum request.H2.Request.meth request.H2.Request.target);
+        match request.H2.Request.meth with
+        | `GET ->
+            let target = request.H2.Request.target in
+            let elts = String.split_on_char '=' target in
+            let elts = List.tl elts in
+            let query = String.concat "=" elts in
+            Logs.info (fun m -> m "%s" query);
+            let query = Base64.decode_exn ~pad:false query in
+            Logs.info (fun m ->  m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) query);
+            let answers, queries = Resolver.handle ~dst ~port query resolver in
+            begin match answers, queries with
+            | [ (_,_,_, payload) ], [] ->
+              let headers = H2.Headers.of_list 
+                [ "content-type", "application/dns-message"
+                ; "content-lengt", string_of_int (String.length payload)
+                ; "cache-control", Fmt.str "max-age=1" ] in
+              let resp = H2.Response.create ~headers `OK in
+              Reqd.respond_with_string reqd resp payload
+            | _ -> assert false end
+        | `POST ->
+            let target = request.H2.Request.target in
+            Logs.info (fun m -> m ">>> %S" target);
+            let headers = H2.Headers.of_list [ ("connection", "close") ] in
+            let resp = H2.Response.create ~headers `OK in
+            Reqd.respond_with_string reqd resp ""
+        | _ ->
+            let headers = H2.Headers.of_list [ ("connection", "close") ] in
+            let resp = H2.Response.create ~headers `Bad_request in
+            Reqd.respond_with_string reqd resp ""
+
+    let handler resolver =
+      { Alpn.error
+      ; request= (fun flow dst reqd protocol -> request resolver flow dst reqd protocol) }
+  end
 
   let start net =
     (match K.dhcp_range () with
@@ -268,7 +397,19 @@ module Main (N : Mirage_net.S) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        Resolver.resolver stack ~root:true resolver;
+        let state = Resolver.connect resolver in
+        Resolver.resolver stack ~root:true state;
+        let ca = CA.make "robur.coop" (Base64.encode_exn "foo") in
+        let certificate, pk, _authenticator = Result.get_ok ca in
+        let own_cert = `Single ([ certificate ], pk) in
+        let tls = Tls.Config.server ~alpn_protocols:["h2"] ~certificates:own_cert () in 
+        let tls = Result.get_ok tls in
+        let http_service =
+          let open DNS_over_HTTP in
+          HTTP.alpn_service ~tls (handler state) in
+        HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
+        let `Initialized th = HTTP.serve http_service service in
+        Lwt.async (fun () -> th); (* forget our HTTP thread, TODO *)
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
