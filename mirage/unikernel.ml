@@ -299,16 +299,16 @@ module Main (N : Mirage_net.S) = struct
             Logs.info (fun m -> m "%s" query);
             let query = Base64.decode_exn ~pad:false query in
             Logs.info (fun m ->  m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) query);
-            let answers, queries = Resolver.handle ~dst ~port query resolver in
-            begin match answers, queries with
-            | [ (_,_,_, payload) ], [] ->
+            let resolve () =
+              resolver (dst, port) query >>= fun answer ->
               let headers = H2.Headers.of_list 
                 [ "content-type", "application/dns-message"
-                ; "content-lengt", string_of_int (String.length payload)
+                ; "content-length", string_of_int (String.length answer)
                 ; "cache-control", Fmt.str "max-age=1" ] in
               let resp = H2.Response.create ~headers `OK in
-              Reqd.respond_with_string reqd resp payload
-            | _ -> assert false end
+              Reqd.respond_with_string reqd resp answer;
+              Lwt.return_unit in
+            Lwt.async resolve
         | `POST ->
             let target = request.H2.Request.target in
             Logs.info (fun m -> m ">>> %S" target);
@@ -397,8 +397,7 @@ module Main (N : Mirage_net.S) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        let state = Resolver.connect resolver in
-        Resolver.resolver stack ~root:true state;
+        let fn = Resolver.resolver stack ~root:true resolver in
         let ca = CA.make "robur.coop" (Base64.encode_exn "foo") in
         let certificate, pk, _authenticator = Result.get_ok ca in
         let own_cert = `Single ([ certificate ], pk) in
@@ -406,7 +405,7 @@ module Main (N : Mirage_net.S) = struct
         let tls = Result.get_ok tls in
         let http_service =
           let open DNS_over_HTTP in
-          HTTP.alpn_service ~tls (handler state) in
+          HTTP.alpn_service ~tls (handler fn) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let `Initialized th = HTTP.serve http_service service in
         Lwt.async (fun () -> th); (* forget our HTTP thread, TODO *)
