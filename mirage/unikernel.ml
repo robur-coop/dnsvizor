@@ -11,7 +11,7 @@ module CA = struct
     X509.Distinguished_name.(
       prefix
       @ [
-          Relative_distinguished_name.singleton (CN "Ephemeral CA for DNSvizor")
+          Relative_distinguished_name.singleton (CN "Ephemeral CA for DNSvizor");
         ])
 
   let cacert_lifetime = Ptime.Span.v (365, 0L)
@@ -25,9 +25,7 @@ module CA = struct
       let g = Mirage_crypto_rng.(create ~seed (module Fortuna)) in
       Mirage_crypto_pk.Rsa.generate ~g ~bits:2048 ()
     in
-    let valid_from =
-      Option.get Ptime.(sub_span (Mirage_ptime.now ()) _10s)
-    in
+    let valid_from = Option.get Ptime.(sub_span (Mirage_ptime.now ()) _10s) in
     Ptime.add_span valid_from cacert_lifetime
     |> Option.to_result ~none:(R.msgf "End time out of range")
     >>= fun valid_until ->
@@ -39,8 +37,8 @@ module CA = struct
       in
       empty
       |> add Subject_alt_name
-           ( true
-           , X509.General_name.(
+           ( true,
+             X509.General_name.(
                singleton DNS [ Domain_name.to_string domain_name ]) )
       |> add Basic_constraints (true, (false, None))
       |> add Key_usage
@@ -154,9 +152,9 @@ module K = struct
     Mirage_runtime.register_arg Arg.(value & flag doc)
 
   let https_port =
-    let doc = 
-      Arg.info ~docs:Manpage.s_none ~doc:"The HTTPS port."
-      [ "https-port" ] in
+    let doc =
+      Arg.info ~docs:Manpage.s_none ~doc:"The HTTPS port." [ "https-port" ]
+    in
     Mirage_runtime.register_arg Arg.(value & opt int 443 & doc)
 end
 
@@ -269,60 +267,81 @@ module Main (N : Mirage_net.S) = struct
       | `Exn exn -> Fmt.pf ppf "Exception: %s" (Printexc.to_string exn)
       | `Internal_server_error -> Fmt.string ppf "Internal server error"
 
-     let error
-       : type reqd headers request response ro wo.
-         (Ipaddr.t * int) -> (reqd, headers, request, response, ro, wo) Alpn.protocol ->
-         ?request:request -> Alpn.server_error -> (headers -> wo) -> unit
-       = fun (ipaddr, port) protocol ?request:_ err _writer ->
-       match protocol with
-       | Alpn.HTTP_1_1 _ -> assert false
-       | Alpn.H2 _ ->
-         Logs.err (fun m -> m "Got an error from %a:%d: %a"
-           Ipaddr.pp ipaddr port pp_error err)
-
-    let request
-      : type reqd headers request response ro wo.
-        _ -> HTTP.TLS.flow -> (Ipaddr.t * int) -> reqd -> (reqd, headers, request, response, ro, wo) Alpn.protocol -> unit
-      = fun resolver flow (dst, port) reqd protocol ->
+    let error :
+        type reqd headers request response ro wo.
+        Ipaddr.t * int ->
+        (reqd, headers, request, response, ro, wo) Alpn.protocol ->
+        ?request:request ->
+        Alpn.server_error ->
+        (headers -> wo) ->
+        unit =
+     fun (ipaddr, port) protocol ?request:_ err _writer ->
       match protocol with
       | Alpn.HTTP_1_1 _ -> assert false
-      | Alpn.H2 (module Reqd) ->
-        Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
-        let request = Reqd.request reqd in
-        Logs.info (fun m -> m "%a %s" H2.Method.pp_hum request.H2.Request.meth request.H2.Request.target);
-        match request.H2.Request.meth with
-        | `GET ->
-            let target = request.H2.Request.target in
-            let elts = String.split_on_char '=' target in
-            let elts = List.tl elts in
-            let query = String.concat "=" elts in
-            Logs.info (fun m -> m "%s" query);
-            let query = Base64.decode_exn ~pad:false query in
-            Logs.info (fun m ->  m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) query);
-            let resolve () =
-              resolver (dst, port) query >>= fun answer ->
-              let headers = H2.Headers.of_list 
-                [ "content-type", "application/dns-message"
-                ; "content-length", string_of_int (String.length answer)
-                ; "cache-control", Fmt.str "max-age=1" ] in
+      | Alpn.H2 _ ->
+          Logs.err (fun m ->
+              m "Got an error from %a:%d: %a" Ipaddr.pp ipaddr port pp_error err)
+
+    let request :
+        type reqd headers request response ro wo.
+        _ ->
+        HTTP.TLS.flow ->
+        Ipaddr.t * int ->
+        reqd ->
+        (reqd, headers, request, response, ro, wo) Alpn.protocol ->
+        unit =
+     fun resolver flow (dst, port) reqd protocol ->
+      match protocol with
+      | Alpn.HTTP_1_1 _ -> assert false
+      | Alpn.H2 (module Reqd) -> (
+          Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
+          let request = Reqd.request reqd in
+          Logs.info (fun m ->
+              m "%a %s" H2.Method.pp_hum request.H2.Request.meth
+                request.H2.Request.target);
+          match request.H2.Request.meth with
+          | `GET ->
+              let target = request.H2.Request.target in
+              let elts = String.split_on_char '=' target in
+              let elts = List.tl elts in
+              let query = String.concat "=" elts in
+              Logs.info (fun m -> m "%s" query);
+              let query = Base64.decode_exn ~pad:false query in
+              Logs.info (fun m ->
+                  m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) query);
+              let resolve () =
+                resolver (dst, port) query >>= fun answer ->
+                let headers =
+                  H2.Headers.of_list
+                    [
+                      ("content-type", "application/dns-message");
+                      ("content-length", string_of_int (String.length answer));
+                      ("cache-control", Fmt.str "max-age=1");
+                    ]
+                in
+                let resp = H2.Response.create ~headers `OK in
+                Reqd.respond_with_string reqd resp answer;
+                Lwt.return_unit
+              in
+              Lwt.async resolve
+          | `POST ->
+              let target = request.H2.Request.target in
+              Logs.info (fun m -> m ">>> %S" target);
+              let headers = H2.Headers.of_list [ ("connection", "close") ] in
               let resp = H2.Response.create ~headers `OK in
-              Reqd.respond_with_string reqd resp answer;
-              Lwt.return_unit in
-            Lwt.async resolve
-        | `POST ->
-            let target = request.H2.Request.target in
-            Logs.info (fun m -> m ">>> %S" target);
-            let headers = H2.Headers.of_list [ ("connection", "close") ] in
-            let resp = H2.Response.create ~headers `OK in
-            Reqd.respond_with_string reqd resp ""
-        | _ ->
-            let headers = H2.Headers.of_list [ ("connection", "close") ] in
-            let resp = H2.Response.create ~headers `Bad_request in
-            Reqd.respond_with_string reqd resp ""
+              Reqd.respond_with_string reqd resp ""
+          | _ ->
+              let headers = H2.Headers.of_list [ ("connection", "close") ] in
+              let resp = H2.Response.create ~headers `Bad_request in
+              Reqd.respond_with_string reqd resp "")
 
     let handler resolver =
-      { Alpn.error
-      ; request= (fun flow dst reqd protocol -> request resolver flow dst reqd protocol) }
+      {
+        Alpn.error;
+        request =
+          (fun flow dst reqd protocol ->
+            request resolver flow dst reqd protocol);
+      }
   end
 
   let start net =
@@ -401,14 +420,18 @@ module Main (N : Mirage_net.S) = struct
         let ca = CA.make "robur.coop" (Base64.encode_exn "foo") in
         let certificate, pk, _authenticator = Result.get_ok ca in
         let own_cert = `Single ([ certificate ], pk) in
-        let tls = Tls.Config.server ~alpn_protocols:["h2"] ~certificates:own_cert () in 
+        let tls =
+          Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert ()
+        in
         let tls = Result.get_ok tls in
         let http_service =
           let open DNS_over_HTTP in
-          HTTP.alpn_service ~tls (handler fn) in
+          HTTP.alpn_service ~tls (handler fn)
+        in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
-        let `Initialized th = HTTP.serve http_service service in
-        Lwt.async (fun () -> th); (* forget our HTTP thread, TODO *)
+        let (`Initialized th) = HTTP.serve http_service service in
+        Lwt.async (fun () -> th);
+        (* forget our HTTP thread, TODO *)
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
