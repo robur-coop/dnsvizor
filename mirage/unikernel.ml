@@ -310,7 +310,8 @@ module Main (N : Mirage_net.S) = struct
               Logs.info (fun m ->
                   m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) query);
               let resolve () =
-                Resolver.resolve_external resolver (dst, port) query >>= fun answer ->
+                Resolver.resolve_external resolver (dst, port) query
+                >>= fun answer ->
                 let headers =
                   H2.Headers.of_list
                     [
