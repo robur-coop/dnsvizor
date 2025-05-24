@@ -327,18 +327,24 @@ module Main (N : Mirage_net.S) = struct
               Lwt.async resolve
           | `POST ->
               let target = request.H2.Request.target in
+              let initial_size =
+                Option.bind
+                  (H2.Headers.get request.headers "content-length")
+                  int_of_string_opt
+                |> Option.value ~default:65536
+              in
               Logs.info (fun m -> m ">>> %S" target);
               let response_body = H2.Reqd.request_body reqd in
               let finished, notify_finished = Lwt.wait () in
               let wakeup v = Lwt.wakeup_later notify_finished v in
-              let on_eof data () = wakeup data in
+              let on_eof data () = wakeup (Buffer.contents data) in
               let rec on_read on_eof acc bs ~off ~len =
                 let str = Bigstringaf.substring ~off ~len bs in
-                let acc = acc ^ str in
+                let () = Buffer.add_string acc str in
                 H2.Body.Reader.schedule_read response_body ~on_read:(on_read on_eof acc)
                   ~on_eof:(on_eof acc)
               in
-              let f_init = "" in
+              let f_init = Buffer.create initial_size in
               H2.Body.Reader.schedule_read response_body ~on_read:(on_read on_eof f_init)
                 ~on_eof:(on_eof f_init);
               let resolve () =
