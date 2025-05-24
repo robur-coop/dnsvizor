@@ -417,10 +417,15 @@ module Main (N : Mirage_net.S) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        let mirage_resolver = Resolver.resolver stack ~root:true resolver in
         let ca = CA.make "robur.coop" (Base64.encode_exn "foo") in
         let certificate, pk, _authenticator = Result.get_ok ca in
         let own_cert = `Single ([ certificate ], pk) in
+        let dns_tls =
+          Tls.Config.server ~certificates:own_cert () |> Result.get_ok
+        in
+        let mirage_resolver =
+          Resolver.resolver stack ~root:true ~tls:dns_tls resolver
+        in
         let tls =
           Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert ()
         in
