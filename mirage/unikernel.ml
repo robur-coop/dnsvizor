@@ -310,7 +310,7 @@ module Main (N : Mirage_net.S) = struct
               Logs.info (fun m ->
                   m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) query);
               let resolve () =
-                resolver (dst, port) query >>= fun answer ->
+                Resolver.resolve_external resolver (dst, port) query >>= fun answer ->
                 let headers =
                   H2.Headers.of_list
                     [
@@ -416,7 +416,7 @@ module Main (N : Mirage_net.S) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        let fn = Resolver.resolver stack ~root:true resolver in
+        let mirage_resolver = Resolver.resolver stack ~root:true resolver in
         let ca = CA.make "robur.coop" (Base64.encode_exn "foo") in
         let certificate, pk, _authenticator = Result.get_ok ca in
         let own_cert = `Single ([ certificate ], pk) in
@@ -426,7 +426,7 @@ module Main (N : Mirage_net.S) = struct
         let tls = Result.get_ok tls in
         let http_service =
           let open DNS_over_HTTP in
-          HTTP.alpn_service ~tls (handler fn)
+          HTTP.alpn_service ~tls (handler mirage_resolver)
         in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve http_service service in
