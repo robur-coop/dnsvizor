@@ -332,10 +332,9 @@ module Main (N : Mirage_net.S) = struct
               let finished, notify_finished = Lwt.wait () in
               let wakeup v = Lwt.wakeup_later notify_finished v in
               let on_eof data () = wakeup data in
-              let f acc s = acc ^ s in
               let rec on_read on_eof acc bs ~off ~len =
                 let str = Bigstringaf.substring ~off ~len bs in
-                let acc = f acc str in
+                let acc = acc ^ str in
                 H2.Body.Reader.schedule_read response_body ~on_read:(on_read on_eof acc)
                   ~on_eof:(on_eof acc)
               in
