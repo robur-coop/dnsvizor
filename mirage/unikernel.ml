@@ -311,13 +311,13 @@ module Main (N : Mirage_net.S) = struct
                   m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) query);
               let resolve () =
                 Resolver.resolve_external resolver (dst, port) query
-                >>= fun answer ->
+                >>= fun (ttl, answer) ->
                 let headers =
                   H2.Headers.of_list
                     [
                       ("content-type", "application/dns-message");
                       ("content-length", string_of_int (String.length answer));
-                      ("cache-control", Fmt.str "max-age=1");
+                      ("cache-control", Fmt.str "max-age=%lu" ttl);
                     ]
                 in
                 let resp = H2.Response.create ~headers `OK in
