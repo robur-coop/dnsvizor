@@ -341,12 +341,12 @@ module Main (N : Mirage_net.S) = struct
               let rec on_read on_eof acc bs ~off ~len =
                 let str = Bigstringaf.substring ~off ~len bs in
                 let () = Buffer.add_string acc str in
-                H2.Body.Reader.schedule_read response_body ~on_read:(on_read on_eof acc)
-                  ~on_eof:(on_eof acc)
+                H2.Body.Reader.schedule_read response_body
+                  ~on_read:(on_read on_eof acc) ~on_eof:(on_eof acc)
               in
               let f_init = Buffer.create initial_size in
-              H2.Body.Reader.schedule_read response_body ~on_read:(on_read on_eof f_init)
-                ~on_eof:(on_eof f_init);
+              H2.Body.Reader.schedule_read response_body
+                ~on_read:(on_read on_eof f_init) ~on_eof:(on_eof f_init);
               let resolve () =
                 finished >>= fun data ->
                 Resolver.resolve_external resolver (dst, port) data
