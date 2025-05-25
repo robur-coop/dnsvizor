@@ -13,7 +13,7 @@ let dnsvizor =
       package "dns";
       package "dns-client";
       package "dns-mirage";
-      package ~sublibs:[ "mirage" ] "dns-resolver";
+      package ~min:"10.1.0" ~sublibs:[ "mirage" ] "dns-resolver";
       package ~sublibs:[ "mirage" ] "dns-stub";
       package "hxd" ~sublibs:[ "core"; "string" ];
       package "dns-tsig";
