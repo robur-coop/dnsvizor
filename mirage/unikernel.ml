@@ -290,7 +290,7 @@ module Main (N : Mirage_net.S) = struct
         reqd ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         unit =
-     fun resolver flow (dst, port) reqd protocol ->
+     fun resolver _flow (dst, port) reqd protocol ->
       match protocol with
       | Alpn.HTTP_1_1 _ -> assert false
       | Alpn.H2 (module Reqd) -> (
