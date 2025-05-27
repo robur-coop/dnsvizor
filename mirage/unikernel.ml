@@ -307,8 +307,6 @@ module Main (N : Mirage_net.S) = struct
               let query = String.concat "=" elts in
               Logs.info (fun m -> m "%s" query);
               let query = Base64.decode_exn ~pad:false query in
-              Logs.info (fun m ->
-                  m "@[<hov>%a@]" (Hxd_string.pp Hxd.default) query);
               let resolve () =
                 Resolver.resolve_external resolver (dst, port) query
                 >>= fun (ttl, answer) ->
