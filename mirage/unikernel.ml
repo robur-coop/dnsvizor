@@ -292,7 +292,9 @@ module Main (N : Mirage_net.S) = struct
         unit =
      fun resolver _flow (dst, port) reqd protocol ->
       match protocol with
-      | Alpn.HTTP_1_1 _ -> assert false (*  HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2*)
+      | Alpn.HTTP_1_1 _ ->
+          assert false
+          (*  HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2*)
       | Alpn.H2 (module Reqd) -> (
           Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
           let request = Reqd.request reqd in
