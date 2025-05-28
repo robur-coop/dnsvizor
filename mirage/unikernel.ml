@@ -24,20 +24,28 @@ module CA = struct
     X509.Signing_request.create cacert_dn pk >>= fun ca_csr ->
     let extensions =
       let open X509.Extension in
-      let key_id = X509.Public_key.id X509.Signing_request.((info ca_csr).public_key) in
+      let key_id =
+        X509.Public_key.id X509.Signing_request.((info ca_csr).public_key)
+      in
       empty
-      |> add Subject_alt_name (true, X509.General_name.(singleton DNS [ Domain_name.to_string domain_name ]))
+      |> add Subject_alt_name
+           ( true,
+             X509.General_name.(
+               singleton DNS [ Domain_name.to_string domain_name ]) )
       |> add Basic_constraints (true, (false, None))
-      |> add Key_usage (true, [ `Digital_signature; `Content_commitment; `Key_encipherment ])
+      |> add Key_usage
+           (true, [ `Digital_signature; `Content_commitment; `Key_encipherment ])
       |> add Subject_key_id (false, key_id)
     in
-    X509.Signing_request.sign ~valid_from ~valid_until ~extensions ca_csr
-      pk cacert_dn
+    X509.Signing_request.sign ~valid_from ~valid_until ~extensions ca_csr pk
+      cacert_dn
     |> reword_error (msgf "%a" X509.Validation.pp_signature_error)
     >>= fun certificate ->
     let fingerprint = X509.Certificate.fingerprint `SHA256 certificate in
     let time () = Some (Mirage_ptime.now ()) in
-    let authenticator = X509.Authenticator.cert_fingerprint ~time ~hash:`SHA256 ~fingerprint in
+    let authenticator =
+      X509.Authenticator.cert_fingerprint ~time ~hash:`SHA256 ~fingerprint
+    in
     Ok (certificate, pk, authenticator)
 end
 
@@ -142,16 +150,21 @@ module K = struct
     Mirage_runtime.register_arg Arg.(value & opt int 443 & doc)
 
   let valid_bits str =
-    try let bits = int_of_string str in
-        bits >= 89
+    try
+      let bits = int_of_string str in
+      bits >= 89
     with _ -> false
 
   let ca_key =
-    let doc = "The seed (base64 encoded) used to generate the private key for the certificate. \
-      The seed can be prepended by the type of the key (rsa or ed25519) plus a colon. \
-      For a RSA key, the user can also specify bits: \"rsa:4096:foo=\"." in
+    let doc =
+      "The seed (base64 encoded) used to generate the private key for the \
+       certificate. The seed can be prepended by the type of the key (rsa or \
+       ed25519) plus a colon. For a RSA key, the user can also specify bits: \
+       \"rsa:4096:foo=\"."
+    in
     let ( let* ) = Result.bind in
-    let parser str = match String.split_on_char ':' str with
+    let parser str =
+      match String.split_on_char ':' str with
       | "rsa" :: bits :: seed when valid_bits bits ->
           let bits = int_of_string bits in
           let seed = String.concat ":" seed in
@@ -168,24 +181,28 @@ module K = struct
           let seed = String.concat ":" seed in
           let* seed = Base64.decode seed in
           let g = Mirage_crypto_rng.(create ~seed (module Fortuna)) in
-          Ok (str, `RSA (Mirage_crypto_pk.Rsa.generate ~g ~bits:4096 ())) in
+          Ok (str, `RSA (Mirage_crypto_pk.Rsa.generate ~g ~bits:4096 ()))
+    in
     let pp ppf (str, _) = Fmt.string ppf str in
     let arg =
       let open Arg in
-      required & opt (some (conv (parser, pp))) None & info [ "ca-seed" ] ~doc in
+      required & opt (some (conv (parser, pp))) None & info [ "ca-seed" ] ~doc
+    in
     Mirage_runtime.register_arg arg
 
   let name =
     let ( let* ) = Result.bind in
     let parser str =
       let* dn = Domain_name.of_string str in
-      Domain_name.host dn in
+      Domain_name.host dn
+    in
     let pp = Domain_name.pp in
     let domain_name = Arg.conv (parser, pp) in
     let doc = "The name (and the SNI for the certificate) of the unikernel." in
     let arg =
       let open Arg in
-      required & opt (some domain_name) None & info [ "name" ] ~doc in
+      required & opt (some domain_name) None & info [ "name" ] ~doc
+    in
     Mirage_runtime.register_arg arg
 end
 
@@ -415,22 +432,31 @@ module Main (N : Mirage_net.S) = struct
           let _, expiring = X509.Certificate.validity certificate in
           let diff = Ptime.diff expiring (Mirage_ptime.now ()) in
           let days, _ = Ptime.Span.to_d_ps diff in
-          max (Duration.of_hour 1) (Duration.of_day (max 0 (days - 7))) in
+          max (Duration.of_hour 1) (Duration.of_day (max 0 (days - 7)))
+        in
         let stop = Lwt_switch.create () in
         let bell () =
           Mirage_sleep.ns seven_days_before_expire >>= fun () ->
-          Lwt_switch.turn_off stop in
+          Lwt_switch.turn_off stop
+        in
         let own_cert = `Single ([ certificate ], pk) in
-        let dns_tls = Tls.Config.server ~certificates:own_cert () |> Result.get_ok in
-        let resolver = Resolver.resolver stack ~root:true ~tls:dns_tls resolver in
-        let tls = Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert () in
+        let dns_tls =
+          Tls.Config.server ~certificates:own_cert () |> Result.get_ok
+        in
+        let resolver =
+          Resolver.resolver stack ~root:true ~tls:dns_tls resolver
+        in
+        let tls =
+          Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert ()
+        in
         let tls = Result.get_ok tls in
         let h2 = HTTP.alpn_service ~tls (handler resolver) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         Lwt.both (bell ()) th >>= fun _ ->
         let ca = CA.make (K.name ()) (K.ca_key ()) in
-        go (Result.get_ok ca) in
+        go (Result.get_ok ca)
+      in
       let ca = CA.make (K.name ()) (K.ca_key ()) in
       go (Result.get_ok ca)
   end
