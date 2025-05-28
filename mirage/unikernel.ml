@@ -1,60 +1,44 @@
 open Lwt.Infix
 
 module CA = struct
-  open Rresult
-
   let prefix =
     X509.Distinguished_name.
       [ Relative_distinguished_name.singleton (CN "DNSvizor") ]
 
   let cacert_dn =
-    X509.Distinguished_name.(
-      prefix
-      @ [
-          Relative_distinguished_name.singleton (CN "Ephemeral CA for DNSvizor");
-        ])
+    let open X509.Distinguished_name in
+    prefix
+    @ [ Relative_distinguished_name.singleton (CN "Ephemeral CA for DNSvizor") ]
 
   let cacert_lifetime = Ptime.Span.v (365, 0L)
   let _10s = Ptime.Span.of_int_s 10
+  let msgf fmt = Fmt.kstr (fun msg -> `Msg msg) fmt
+  let reword_error = Result.map_error
 
-  let make domain_name seed =
-    Domain_name.of_string domain_name >>= Domain_name.host
-    >>= fun domain_name ->
-    let private_key =
-      let seed = Base64.decode_exn ~pad:false seed in
-      let g = Mirage_crypto_rng.(create ~seed (module Fortuna)) in
-      Mirage_crypto_pk.Rsa.generate ~g ~bits:2048 ()
-    in
+  let make domain_name (_, pk) =
+    let ( >>= ) = Result.bind in
     let valid_from = Option.get Ptime.(sub_span (Mirage_ptime.now ()) _10s) in
     Ptime.add_span valid_from cacert_lifetime
-    |> Option.to_result ~none:(R.msgf "End time out of range")
+    |> Option.to_result ~none:(msgf "End time out of range")
     >>= fun valid_until ->
-    X509.Signing_request.create cacert_dn (`RSA private_key) >>= fun ca_csr ->
+    X509.Signing_request.create cacert_dn pk >>= fun ca_csr ->
     let extensions =
       let open X509.Extension in
-      let key_id =
-        X509.Public_key.id X509.Signing_request.((info ca_csr).public_key)
-      in
+      let key_id = X509.Public_key.id X509.Signing_request.((info ca_csr).public_key) in
       empty
-      |> add Subject_alt_name
-           ( true,
-             X509.General_name.(
-               singleton DNS [ Domain_name.to_string domain_name ]) )
+      |> add Subject_alt_name (true, X509.General_name.(singleton DNS [ Domain_name.to_string domain_name ]))
       |> add Basic_constraints (true, (false, None))
-      |> add Key_usage
-           (true, [ `Digital_signature; `Content_commitment; `Key_encipherment ])
+      |> add Key_usage (true, [ `Digital_signature; `Content_commitment; `Key_encipherment ])
       |> add Subject_key_id (false, key_id)
     in
     X509.Signing_request.sign ~valid_from ~valid_until ~extensions ca_csr
-      (`RSA private_key) cacert_dn
-    |> R.reword_error (R.msgf "%a" X509.Validation.pp_signature_error)
+      pk cacert_dn
+    |> reword_error (msgf "%a" X509.Validation.pp_signature_error)
     >>= fun certificate ->
     let fingerprint = X509.Certificate.fingerprint `SHA256 certificate in
     let time () = Some (Mirage_ptime.now ()) in
-    let authenticator =
-      X509.Authenticator.cert_fingerprint ~time ~hash:`SHA256 ~fingerprint
-    in
-    Ok (certificate, `RSA private_key, authenticator)
+    let authenticator = X509.Authenticator.cert_fingerprint ~time ~hash:`SHA256 ~fingerprint in
+    Ok (certificate, pk, authenticator)
 end
 
 module K = struct
@@ -156,6 +140,53 @@ module K = struct
       Arg.info ~docs:Manpage.s_none ~doc:"The HTTPS port." [ "https-port" ]
     in
     Mirage_runtime.register_arg Arg.(value & opt int 443 & doc)
+
+  let valid_bits str =
+    try let bits = int_of_string str in
+        bits >= 89
+    with _ -> false
+
+  let ca_key =
+    let doc = "The seed (base64 encoded) used to generate the private key for the certificate. \
+      The seed can be prepended by the type of the key (rsa or ed25519) plus a colon. \
+      For a RSA key, the user can also specify bits: \"rsa:4096:foo=\"." in
+    let ( let* ) = Result.bind in
+    let parser str = match String.split_on_char ':' str with
+      | "rsa" :: bits :: seed when valid_bits bits ->
+          let bits = int_of_string bits in
+          let seed = String.concat ":" seed in
+          let* seed = Base64.decode seed in
+          let g = Mirage_crypto_rng.(create ~seed (module Fortuna)) in
+          Ok (str, `RSA (Mirage_crypto_pk.Rsa.generate ~g ~bits ()))
+      | "ed25519" :: seed ->
+          let seed = String.concat ":" seed in
+          let* seed = Base64.decode seed in
+          let g = Mirage_crypto_rng.(create ~seed (module Fortuna)) in
+          let pk, _ = Mirage_crypto_ec.Ed25519.generate ~g () in
+          Ok (str, `ED25519 pk)
+      | "rsa" :: seed | seed ->
+          let seed = String.concat ":" seed in
+          let* seed = Base64.decode seed in
+          let g = Mirage_crypto_rng.(create ~seed (module Fortuna)) in
+          Ok (str, `RSA (Mirage_crypto_pk.Rsa.generate ~g ~bits:4096 ())) in
+    let pp ppf (str, _) = Fmt.string ppf str in
+    let arg =
+      let open Arg in
+      required & opt (some (conv (parser, pp))) None & info [ "ca-seed" ] ~doc in
+    Mirage_runtime.register_arg arg
+
+  let name =
+    let ( let* ) = Result.bind in
+    let parser str =
+      let* dn = Domain_name.of_string str in
+      Domain_name.host dn in
+    let pp = Domain_name.pp in
+    let domain_name = Arg.conv (parser, pp) in
+    let doc = "The name (and the SNI for the certificate) of the unikernel." in
+    let arg =
+      let open Arg in
+      required & opt (some domain_name) None & info [ "name" ] ~doc in
+    Mirage_runtime.register_arg arg
 end
 
 module Main (N : Mirage_net.S) = struct
@@ -260,7 +291,7 @@ module Main (N : Mirage_net.S) = struct
   module Stub = Dns_stub_mirage.Make (S)
   module HTTP = Paf_mirage.Make (TCP)
 
-  module DNS_over_HTTP = struct
+  module Daemon = struct
     let pp_error ppf = function
       | `Bad_gateway -> Fmt.string ppf "Bad gateway"
       | `Bad_request -> Fmt.string ppf "Bad request"
@@ -294,7 +325,8 @@ module Main (N : Mirage_net.S) = struct
       match protocol with
       | Alpn.HTTP_1_1 _ ->
           assert false
-          (*  HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2*)
+          (* HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use
+             with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2 *)
       | Alpn.H2 (module Reqd) -> (
           Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
           let request = Reqd.request reqd in
@@ -376,6 +408,31 @@ module Main (N : Mirage_net.S) = struct
           (fun flow dst reqd protocol ->
             request resolver flow dst reqd protocol);
       }
+
+    let start_resolver stack tcp resolver =
+      let rec go (certificate, pk, _authenticator) =
+        let seven_days_before_expire =
+          let _, expiring = X509.Certificate.validity certificate in
+          let diff = Ptime.diff expiring (Mirage_ptime.now ()) in
+          let days, _ = Ptime.Span.to_d_ps diff in
+          max (Duration.of_hour 1) (Duration.of_day (max 0 (days - 7))) in
+        let stop = Lwt_switch.create () in
+        let bell () =
+          Mirage_sleep.ns seven_days_before_expire >>= fun () ->
+          Lwt_switch.turn_off stop in
+        let own_cert = `Single ([ certificate ], pk) in
+        let dns_tls = Tls.Config.server ~certificates:own_cert () |> Result.get_ok in
+        let resolver = Resolver.resolver stack ~root:true ~tls:dns_tls resolver in
+        let tls = Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert () in
+        let tls = Result.get_ok tls in
+        let h2 = HTTP.alpn_service ~tls (handler resolver) in
+        HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
+        let (`Initialized th) = HTTP.serve ~stop h2 service in
+        Lwt.both (bell ()) th >>= fun _ ->
+        let ca = CA.make (K.name ()) (K.ca_key ()) in
+        go (Result.get_ok ca) in
+      let ca = CA.make (K.name ()) (K.ca_key ()) in
+      go (Result.get_ok ca)
   end
 
   let start net =
@@ -450,27 +507,7 @@ module Main (N : Mirage_net.S) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        let ca = CA.make "robur.coop" (Base64.encode_exn "foo") in
-        let certificate, pk, _authenticator = Result.get_ok ca in
-        let own_cert = `Single ([ certificate ], pk) in
-        let dns_tls =
-          Tls.Config.server ~certificates:own_cert () |> Result.get_ok
-        in
-        let mirage_resolver =
-          Resolver.resolver stack ~root:true ~tls:dns_tls resolver
-        in
-        let tls =
-          Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert ()
-        in
-        let tls = Result.get_ok tls in
-        let http_service =
-          let open DNS_over_HTTP in
-          HTTP.alpn_service ~tls (handler mirage_resolver)
-        in
-        HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
-        let (`Initialized th) = HTTP.serve http_service service in
-        Lwt.async (fun () -> th);
-        (* forget our HTTP thread, TODO *)
+        Lwt.async (fun () -> Daemon.start_resolver stack tcp resolver);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);

@@ -15,9 +15,7 @@ let dnsvizor =
       package "dns-mirage";
       package ~min:"10.1.0" ~sublibs:[ "mirage" ] "dns-resolver";
       package ~sublibs:[ "mirage" ] "dns-stub";
-      package "hxd" ~sublibs:[ "core"; "string" ];
       package "dns-tsig";
-      package "rresult";
       package "paf" ~sublibs:[ "mirage"; "alpn" ];
       package "dns-server";
       package ~min:"3.0.0" "ethernet";
