@@ -145,15 +145,12 @@ module K = struct
 
   let dnssec =
     let doc =
-      Arg.info ~doc:"Validate DNS replies and cache DNSSEC data."
-        [ "dnssec" ]
+      Arg.info ~doc:"Validate DNS replies and cache DNSSEC data." [ "dnssec" ]
     in
     Mirage_runtime.register_arg Arg.(value & flag doc)
 
   let https_port =
-    let doc =
-      Arg.info ~doc:"The HTTPS port." [ "https-port" ]
-    in
+    let doc = Arg.info ~doc:"The HTTPS port." [ "https-port" ] in
     Mirage_runtime.register_arg Arg.(value & opt int 443 & doc)
 
   let valid_bits str =
