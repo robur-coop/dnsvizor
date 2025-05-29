@@ -143,9 +143,16 @@ module K = struct
     in
     Mirage_runtime.register_arg Arg.(value & flag doc)
 
+  let dnssec =
+    let doc =
+      Arg.info ~doc:"Validate DNS replies and cache DNSSEC data."
+        [ "dnssec" ]
+    in
+    Mirage_runtime.register_arg Arg.(value & flag doc)
+
   let https_port =
     let doc =
-      Arg.info ~docs:Manpage.s_none ~doc:"The HTTPS port." [ "https-port" ]
+      Arg.info ~doc:"The HTTPS port." [ "https-port" ]
     in
     Mirage_runtime.register_arg Arg.(value & opt int 443 & doc)
 
@@ -529,7 +536,7 @@ module Main (N : Mirage_net.S) = struct
     | None ->
         Logs.info (fun m -> m "using a recursive resolver");
         let resolver =
-          Dns_resolver.create ?cache_size:(K.dns_cache ()) ~dnssec:false
+          Dns_resolver.create ?cache_size:(K.dns_cache ()) ~dnssec:(K.dnssec ())
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in

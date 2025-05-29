@@ -414,6 +414,9 @@ let parse_file data =
       string name *> skip_spcs *> char '=' *> commit *> skip_spcs
       <?> Printf.sprintf "directive prefix %S" name
     in
+    let flag name =
+      string name *> conf_end_of_directive
+    in
     let ignore_directive key =
       directive_prefix key *> commit *> ignore_line key >>| fun _ -> `Ignored
     in
@@ -425,6 +428,7 @@ let parse_file data =
          [
            ( directive_prefix "dhcp-range" *> dhcp_range conf_end_of_directive
            >>| fun range -> `Dhcp_range range );
+           ( flag "dnssec" >>| fun _ -> `Dnssec );
            ignore_directive "interface";
            ignore_directive "except-interface";
            ignore_directive "listen-address";
