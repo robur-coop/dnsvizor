@@ -26,6 +26,7 @@ let dnsvizor =
       package ~min:"1.6.0" "charrua";
       package "charrua-server";
       package ~min:"4.5.0" ~sublibs:[ "network" ] "mirage-runtime";
+      package "tyxml";
     ]
   in
   main ~packages "Unikernel.Main" (network @-> job)
