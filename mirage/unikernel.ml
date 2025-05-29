@@ -350,8 +350,38 @@ module Main (N : Mirage_net.S) = struct
           Logs.info (fun m ->
               m "%a %s" H2.Method.pp_hum request.H2.Request.meth
                 request.H2.Request.target);
-          match request.H2.Request.meth with
-          | `GET ->
+          match (request.H2.Request.meth, request.H2.Request.target) with
+          | `GET, "/" | `GET, "/dashboard" ->
+              let headers =
+                H2.Headers.of_list [ ("content-type", "text/html") ]
+              in
+              let resp = H2.Response.create ~headers `OK in
+              Reqd.respond_with_string reqd resp
+                (Dashboard.dashboard_layout ~content:Statistics.statistics_page
+                   ())
+          | `GET, "/querylog" ->
+              let headers =
+                H2.Headers.of_list [ ("content-type", "text/html") ]
+              in
+              let resp = H2.Response.create ~headers `OK in
+              Reqd.respond_with_string reqd resp
+                (Dashboard.dashboard_layout ~content:Query_logs.query_page ())
+          | `GET, "/blocklist" ->
+              let headers =
+                H2.Headers.of_list [ ("content-type", "text/html") ]
+              in
+              let resp = H2.Response.create ~headers `OK in
+              Reqd.respond_with_string reqd resp
+                (Dashboard.dashboard_layout ~content:Blocklist.block_page ())
+          | `GET, "/config" ->
+              let headers =
+                H2.Headers.of_list [ ("content-type", "text/html") ]
+              in
+              let resp = H2.Response.create ~headers `OK in
+              Reqd.respond_with_string reqd resp
+                (Dashboard.dashboard_layout ~content:Statistics.statistics_page
+                   ())
+          | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
               let target = request.H2.Request.target in
               let elts = String.split_on_char '=' target in
               let elts = List.tl elts in
@@ -374,7 +404,7 @@ module Main (N : Mirage_net.S) = struct
                 Lwt.return_unit
               in
               Lwt.async resolve
-          | `POST ->
+          | `POST, path when String.starts_with ~prefix:"/dns-query" path ->
               let target = request.H2.Request.target in
               let initial_size =
                 Option.bind
