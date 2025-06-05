@@ -14,9 +14,9 @@ let header ?(page_title = "DNSVizor") () =
             ]
           ();
         script ~a:[ a_src "/main.js" ] (txt "");
-        link ~rel:[ `Stylesheet ] ~href:"/style.css" ();
         script ~a:[ a_src "https://kit.fontawesome.com/d1697f2fa9.js" ] (txt "");
         (* TODO: change from the taildwind cdn to a local css file *)
+        (* link ~rel:[ `Stylesheet ] ~href:"/style.css" (); *)
         script
           ~a:[ a_src "https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4" ]
           (txt "");
