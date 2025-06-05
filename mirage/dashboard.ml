@@ -1,6 +1,6 @@
 open Tyxml
 
-let dashboard_layout ?(page_title = "Dashboard | DNSVizor") ~content () =
+let dashboard_layout ?(page_title = "Dashboard | DNSvizor") ~content () =
   let page =
     Html.(
       html
@@ -126,7 +126,7 @@ let dashboard_layout ?(page_title = "Dashboard | DNSVizor") ~content () =
                                 text-5xl";
                              ];
                          ]
-                       [ txt "DNSVizor" ];
+                       [ txt "DNSvizor" ];
                      content;
                    ];
                ];
