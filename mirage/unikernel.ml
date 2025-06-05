@@ -210,7 +210,12 @@ module K = struct
     Mirage_runtime.register_arg arg
 end
 
-module Main (N : Mirage_net.S) = struct
+module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
+  let js_file assets =
+    ASSETS.get assets (Mirage_kv.Key.v "main.js") >|= function
+    | Error _e -> invalid_arg "JS file could not be loaded"
+    | Ok js -> js
+
   module Net = struct
     (* A Mirage_net.S implementation which diverts DHCP messages to a DHCP
        server. The DHCP server needs to get the entire Ethernet frame, because
@@ -341,8 +346,9 @@ module Main (N : Mirage_net.S) = struct
         Ipaddr.t * int ->
         reqd ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
+        string ->
         unit =
-     fun resolver _flow (dst, port) reqd protocol ->
+     fun resolver _flow (dst, port) reqd protocol js_file ->
       match protocol with
       | Alpn.HTTP_1_1 _ ->
           assert false
@@ -354,8 +360,44 @@ module Main (N : Mirage_net.S) = struct
           Logs.info (fun m ->
               m "%a %s" H2.Method.pp_hum request.H2.Request.meth
                 request.H2.Request.target);
-          match request.H2.Request.meth with
-          | `GET ->
+          match (request.H2.Request.meth, request.H2.Request.target) with
+          | `GET, "/main.js" ->
+              let headers =
+                H2.Headers.of_list [ ("content-type", "text/javascript") ]
+              in
+              let resp = H2.Response.create ~headers `OK in
+              Reqd.respond_with_string reqd resp js_file
+          | `GET, "/" | `GET, "/dashboard" ->
+              let headers =
+                H2.Headers.of_list [ ("content-type", "text/html") ]
+              in
+              let resp = H2.Response.create ~headers `OK in
+              Reqd.respond_with_string reqd resp
+                (Dashboard.dashboard_layout ~content:Statistics.statistics_page
+                   ())
+          | `GET, "/querylog" ->
+              let headers =
+                H2.Headers.of_list [ ("content-type", "text/html") ]
+              in
+              let resp = H2.Response.create ~headers `OK in
+              Reqd.respond_with_string reqd resp
+                (Dashboard.dashboard_layout ~content:Query_logs.query_page ())
+          | `GET, "/blocklist" ->
+              let headers =
+                H2.Headers.of_list [ ("content-type", "text/html") ]
+              in
+              let resp = H2.Response.create ~headers `OK in
+              Reqd.respond_with_string reqd resp
+                (Dashboard.dashboard_layout ~content:Blocklist.block_page ())
+          | `GET, "/config" ->
+              let headers =
+                H2.Headers.of_list [ ("content-type", "text/html") ]
+              in
+              let resp = H2.Response.create ~headers `OK in
+              Reqd.respond_with_string reqd resp
+                (Dashboard.dashboard_layout ~content:Statistics.statistics_page
+                   ())
+          | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
               let target = request.H2.Request.target in
               let elts = String.split_on_char '=' target in
               let elts = List.tl elts in
@@ -378,7 +420,7 @@ module Main (N : Mirage_net.S) = struct
                 Lwt.return_unit
               in
               Lwt.async resolve
-          | `POST ->
+          | `POST, path when String.starts_with ~prefix:"/dns-query" path ->
               let target = request.H2.Request.target in
               let initial_size =
                 Option.bind
@@ -422,15 +464,15 @@ module Main (N : Mirage_net.S) = struct
               let resp = H2.Response.create ~headers `Bad_request in
               Reqd.respond_with_string reqd resp "")
 
-    let handler resolver =
+    let handler resolver js_file =
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request resolver flow dst reqd protocol);
+            request resolver flow dst reqd protocol js_file);
       }
 
-    let start_resolver stack tcp resolver =
+    let start_resolver stack tcp resolver js_file =
       let rec go (certificate, pk, _authenticator) =
         let seven_days_before_expire =
           let _, expiring = X509.Certificate.validity certificate in
@@ -454,7 +496,7 @@ module Main (N : Mirage_net.S) = struct
           Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert ()
         in
         let tls = Result.get_ok tls in
-        let h2 = HTTP.alpn_service ~tls (handler resolver) in
+        let h2 = HTTP.alpn_service ~tls (handler resolver js_file) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         Lwt.both (bell ()) th >>= fun _ ->
@@ -465,7 +507,7 @@ module Main (N : Mirage_net.S) = struct
       go (Result.get_ok ca)
   end
 
-  let start net =
+  let start net assets =
     (match K.dhcp_range () with
     | None -> ()
     | Some x ->
@@ -521,6 +563,7 @@ module Main (N : Mirage_net.S) = struct
     IPV4V6.connect ~ipv4_only:(K.ipv4_only ()) ~ipv6_only:(K.ipv6_only ()) ipv4
       ipv6
     >>= fun ip ->
+    js_file assets >>= fun js_file ->
     ICMP.connect ipv4 >>= fun icmp ->
     UDP.connect ip >>= fun udp ->
     TCP.connect ip >>= fun tcp ->
@@ -537,7 +580,7 @@ module Main (N : Mirage_net.S) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        Lwt.async (fun () -> Daemon.start_resolver stack tcp resolver);
+        Lwt.async (fun () -> Daemon.start_resolver stack tcp resolver js_file);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
