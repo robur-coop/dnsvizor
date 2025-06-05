@@ -3,6 +3,8 @@
 
 open Mirage
 
+let assets = crunch "assets"
+
 let dnsvizor =
   let pin = "git+file://" ^ Filename.dirname (Sys.getcwd ()) ^ "#HEAD" in
   let packages =
@@ -29,7 +31,7 @@ let dnsvizor =
       package "tyxml";
     ]
   in
-  main ~packages "Unikernel.Main" (network @-> job)
+  main ~packages "Unikernel.Main" (network @-> kv_ro @-> job)
 
 (* this works around the [default_network] on Unix brings a --interface runtime
    argument that collides with dnsmasq arguments *)
@@ -39,4 +41,4 @@ let mynetwork =
     [ (`Unix, netif ~group:"unix" "tap0") ]
     ~default:default_network
 
-let () = register "dnsvizor" [ dnsvizor $ mynetwork ]
+let () = register "dnsvizor" [ dnsvizor $ mynetwork $ assets ]
