@@ -355,6 +355,18 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           (* HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use
              with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2 *)
       | Alpn.H2 (module Reqd) -> (
+          let reply ?(content_type = "text/plain") reqd ?(headers = []) data =
+            let headers =
+              H2.Headers.of_list
+                ([
+                   ("content-type", content_type);
+                   ("content-legnth", string_of_int (String.length data));
+                 ]
+                @ headers)
+            in
+            let resp = H2.Response.create ~headers `OK in
+            Reqd.respond_with_string reqd resp data
+          in
           Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
           let request = Reqd.request reqd in
           Logs.info (fun m ->
@@ -362,39 +374,19 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 request.H2.Request.target);
           match (request.H2.Request.meth, request.H2.Request.target) with
           | `GET, "/main.js" ->
-              let headers =
-                H2.Headers.of_list [ ("content-type", "text/javascript") ]
-              in
-              let resp = H2.Response.create ~headers `OK in
-              Reqd.respond_with_string reqd resp js_file
+              reply ~content_type:"text/javascript" reqd js_file
           | `GET, "/" | `GET, "/dashboard" ->
-              let headers =
-                H2.Headers.of_list [ ("content-type", "text/html") ]
-              in
-              let resp = H2.Response.create ~headers `OK in
-              Reqd.respond_with_string reqd resp
+              reply ~content_type:"text/html" reqd
                 (Dashboard.dashboard_layout ~content:Statistics.statistics_page
                    ())
           | `GET, "/querylog" ->
-              let headers =
-                H2.Headers.of_list [ ("content-type", "text/html") ]
-              in
-              let resp = H2.Response.create ~headers `OK in
-              Reqd.respond_with_string reqd resp
+              reply ~content_type:"text/html" reqd
                 (Dashboard.dashboard_layout ~content:Query_logs.query_page ())
           | `GET, "/blocklist" ->
-              let headers =
-                H2.Headers.of_list [ ("content-type", "text/html") ]
-              in
-              let resp = H2.Response.create ~headers `OK in
-              Reqd.respond_with_string reqd resp
+              reply ~content_type:"text/html" reqd
                 (Dashboard.dashboard_layout ~content:Blocklist.block_page ())
           | `GET, "/config" ->
-              let headers =
-                H2.Headers.of_list [ ("content-type", "text/html") ]
-              in
-              let resp = H2.Response.create ~headers `OK in
-              Reqd.respond_with_string reqd resp
+              reply ~content_type:"text/html" reqd
                 (Dashboard.dashboard_layout ~content:Statistics.statistics_page
                    ())
           | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
@@ -407,16 +399,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let resolve () =
                 Resolver.resolve_external resolver (dst, port) query
                 >>= fun (ttl, answer) ->
-                let headers =
-                  H2.Headers.of_list
-                    [
-                      ("content-type", "application/dns-message");
-                      ("content-length", string_of_int (String.length answer));
-                      ("cache-control", Fmt.str "max-age=%lu" ttl);
-                    ]
-                in
-                let resp = H2.Response.create ~headers `OK in
-                Reqd.respond_with_string reqd resp answer;
+                reply ~content_type:"application/dns-message"
+                  ~headers:[ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
+                  reqd answer;
                 Lwt.return_unit
               in
               Lwt.async resolve
@@ -446,16 +431,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 finished >>= fun data ->
                 Resolver.resolve_external resolver (dst, port) data
                 >>= fun (ttl, answer) ->
-                let headers =
-                  H2.Headers.of_list
-                    [
-                      ("content-type", "application/dns-message");
-                      ("content-length", string_of_int (String.length answer));
-                      ("cache-control", Fmt.str "max-age=%lu" ttl);
-                    ]
-                in
-                let resp = H2.Response.create ~headers `OK in
-                Reqd.respond_with_string reqd resp answer;
+                reply ~content_type:"application/dns-message"
+                  ~headers:[ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
+                  reqd answer;
                 Lwt.return_unit
               in
               Lwt.async resolve
