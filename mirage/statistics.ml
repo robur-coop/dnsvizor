@@ -1,4 +1,4 @@
-let statistics_page =
+let statistics_page stats =
   Tyxml_html.(
     main
       ~a:[ a_class [ "w-full text-gray-900" ] ]
@@ -41,10 +41,10 @@ let statistics_page =
                       [
                         div
                           ~a:[ a_class [ "text-sm" ] ]
-                          [ txt "Total queries (5 clients)" ];
+                          [ txt ("Total queries (" ^ string_of_int (Ipaddr.Set.cardinal stats.Dns_resolver.clients) ^ " clients)") ];
                         div
                           ~a:[ a_class [ "text-2xl font-bold" ] ]
-                          [ txt "3,416" ];
+                          [ txt (string_of_int stats.queries) ];
                       ];
                     div
                       ~a:
@@ -58,7 +58,7 @@ let statistics_page =
                           [ txt "Queries Blocked" ];
                         div
                           ~a:[ a_class [ "text-2xl font-bold" ] ]
-                          [ txt "491" ];
+                          [ txt (string_of_int stats.blocked) ];
                       ];
                     div
                       ~a:
@@ -72,7 +72,7 @@ let statistics_page =
                           [ txt "Percent Blocked" ];
                         div
                           ~a:[ a_class [ "text-2xl font-bold" ] ]
-                          [ txt "14.4%" ];
+                          [ txt (Fmt.str "%.1f%%" (float_of_int stats.blocked /. float_of_int stats.queries)) ];
                       ];
                     div
                       ~a:
@@ -86,7 +86,7 @@ let statistics_page =
                           [ txt "Domains on Blocklist" ];
                         div
                           ~a:[ a_class [ "text-2xl font-bold" ] ]
-                          [ txt "82,309" ];
+                          [ txt (string_of_int 0 (* TODO (List.length blocklist) *)) ];
                       ];
                   ];
                 div

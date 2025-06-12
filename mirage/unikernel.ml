@@ -376,8 +376,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           | `GET, "/main.js" ->
               reply ~content_type:"text/javascript" reqd js_file
           | `GET, "/" | `GET, "/dashboard" ->
+              let stats = Resolver.stats resolver in
               reply reqd
-                (Dashboard.dashboard_layout ~content:Statistics.statistics_page
+                (Dashboard.dashboard_layout ~content:(Statistics.statistics_page stats)
                    ())
           | `GET, "/querylog" ->
               reply reqd
@@ -385,10 +386,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           | `GET, "/blocklist" ->
               reply reqd
                 (Dashboard.dashboard_layout ~content:Blocklist.block_page ())
-          | `GET, "/config" ->
-              reply reqd
-                (Dashboard.dashboard_layout ~content:Statistics.statistics_page
-                   ())
           | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
               let target = request.H2.Request.target in
               let elts = String.split_on_char '=' target in
