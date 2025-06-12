@@ -360,7 +360,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               H2.Headers.of_list
                 ([
                    ("content-type", content_type);
-                   ("content-legnth", string_of_int (String.length data));
+                   ("content-length", string_of_int (String.length data));
                  ]
                 @ headers)
             in
