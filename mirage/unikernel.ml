@@ -355,7 +355,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           (* HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use
              with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2 *)
       | Alpn.H2 (module Reqd) -> (
-          let reply ?(content_type = "text/plain") reqd ?(headers = []) data =
+          let reply ?(content_type = "text/html") reqd ?(headers = []) data =
             let headers =
               H2.Headers.of_list
                 ([
@@ -376,17 +376,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           | `GET, "/main.js" ->
               reply ~content_type:"text/javascript" reqd js_file
           | `GET, "/" | `GET, "/dashboard" ->
-              reply ~content_type:"text/html" reqd
+              reply reqd
                 (Dashboard.dashboard_layout ~content:Statistics.statistics_page
                    ())
           | `GET, "/querylog" ->
-              reply ~content_type:"text/html" reqd
+              reply reqd
                 (Dashboard.dashboard_layout ~content:Query_logs.query_page ())
           | `GET, "/blocklist" ->
-              reply ~content_type:"text/html" reqd
+              reply reqd
                 (Dashboard.dashboard_layout ~content:Blocklist.block_page ())
           | `GET, "/config" ->
-              reply ~content_type:"text/html" reqd
+              reply reqd
                 (Dashboard.dashboard_layout ~content:Statistics.statistics_page
                    ())
           | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
