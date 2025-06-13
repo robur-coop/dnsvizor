@@ -341,14 +341,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
     let request :
         type reqd headers request response ro wo.
-        _ ->
+        _ -> _ ->
         HTTP.TLS.flow ->
         Ipaddr.t * int ->
         reqd ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         string ->
         unit =
-     fun resolver _flow (dst, port) reqd protocol js_file ->
+     fun resolver metrics_cache _flow (dst, port) reqd protocol js_file ->
       match protocol with
       | Alpn.HTTP_1_1 _ ->
           assert false
@@ -376,6 +376,29 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           | `GET, "/main.js" ->
               reply ~content_type:"text/javascript" reqd js_file
           | `GET, "/" | `GET, "/dashboard" ->
+              let stats = Resolver.stats resolver in
+              let cache_lookup_metrics =
+                let map = metrics_cache () in
+                let dns_cache_src =
+                  List.find (fun src -> Metrics.Src.name src = "dns-cache") (Metrics.Src.list ())
+                in
+                let dns_cache_metrics =
+                  match Metrics.SM.find_opt dns_cache_src map with
+                  | None ->
+                    print_endline "no dns-cache found";
+                    []
+                  | Some (_tags, data) -> Metrics.Data.fields data
+                in
+                List.iter (fun field ->
+                    print_endline ("field " ^ Metrics.key field))
+                  dns_cache_metrics;
+                match List.find_opt (fun field -> Metrics.key field = "lookups") dns_cache_metrics with
+                | None -> 0
+                | Some data -> match Metrics.value data with
+                  | V (Uint, u) -> u
+                  | _ -> -1
+              in
+              print_endline ("lookups: " ^ string_of_int cache_lookup_metrics);
               reply reqd
                 (Dashboard.dashboard_layout ~content:Statistics.statistics_page
                    ())
@@ -442,15 +465,15 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let resp = H2.Response.create ~headers `Bad_request in
               Reqd.respond_with_string reqd resp "")
 
-    let handler resolver js_file =
+    let handler resolver js_file metrics_cache =
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request resolver flow dst reqd protocol js_file);
+            request resolver metrics_cache flow dst reqd protocol js_file);
       }
 
-    let start_resolver stack tcp resolver js_file =
+    let start_resolver stack tcp resolver js_file metrics_cache =
       let rec go (certificate, pk, _authenticator) =
         let seven_days_before_expire =
           let _, expiring = X509.Certificate.validity certificate in
@@ -474,7 +497,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert ()
         in
         let tls = Result.get_ok tls in
-        let h2 = HTTP.alpn_service ~tls (handler resolver js_file) in
+        let h2 = HTTP.alpn_service ~tls (handler resolver js_file metrics_cache) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         Lwt.both (bell ()) th >>= fun _ ->
@@ -546,6 +569,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     UDP.connect ip >>= fun udp ->
     TCP.connect ip >>= fun tcp ->
     S.connect net eth arp ip icmp udp tcp >>= fun stack ->
+    let get_cache, reporter = Metrics.cache_reporter () in
+    Metrics.set_reporter reporter;
+    Metrics.enable_all ();
+    Metrics_lwt.init_periodic (fun () -> Mirage_sleep.ns (Duration.of_sec 10));
     let primary_t =
       (* setup DNS server state: *)
       Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate Dns_trie.empty
@@ -558,7 +585,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        Lwt.async (fun () -> Daemon.start_resolver stack tcp resolver js_file);
+        Lwt.async (fun () -> Daemon.start_resolver stack tcp resolver js_file get_cache);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
