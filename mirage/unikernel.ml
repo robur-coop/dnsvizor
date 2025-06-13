@@ -341,7 +341,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
     let request :
         type reqd headers request response ro wo.
-        _ -> _ ->
+        _ ->
+        _ ->
         HTTP.TLS.flow ->
         Ipaddr.t * int ->
         reqd ->
@@ -380,23 +381,28 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let cache_lookup_metrics =
                 let map = metrics_cache () in
                 let dns_cache_src =
-                  List.find (fun src -> Metrics.Src.name src = "dns-cache") (Metrics.Src.list ())
+                  List.find
+                    (fun src -> Metrics.Src.name src = "dns-cache")
+                    (Metrics.Src.list ())
                 in
                 let dns_cache_metrics =
                   match Metrics.SM.find_opt dns_cache_src map with
                   | None ->
-                    print_endline "no dns-cache found";
-                    []
+                      print_endline "no dns-cache found";
+                      []
                   | Some (_tags, data) -> Metrics.Data.fields data
                 in
-                List.iter (fun field ->
-                    print_endline ("field " ^ Metrics.key field))
+                List.iter
+                  (fun field -> print_endline ("field " ^ Metrics.key field))
                   dns_cache_metrics;
-                match List.find_opt (fun field -> Metrics.key field = "lookups") dns_cache_metrics with
+                match
+                  List.find_opt
+                    (fun field -> Metrics.key field = "lookups")
+                    dns_cache_metrics
+                with
                 | None -> 0
-                | Some data -> match Metrics.value data with
-                  | V (Uint, u) -> u
-                  | _ -> -1
+                | Some data -> (
+                    match Metrics.value data with V (Uint, u) -> u | _ -> -1)
               in
               print_endline ("lookups: " ^ string_of_int cache_lookup_metrics);
               reply reqd
@@ -497,7 +503,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert ()
         in
         let tls = Result.get_ok tls in
-        let h2 = HTTP.alpn_service ~tls (handler resolver js_file metrics_cache) in
+        let h2 =
+          HTTP.alpn_service ~tls (handler resolver js_file metrics_cache)
+        in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         Lwt.both (bell ()) th >>= fun _ ->
@@ -585,7 +593,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        Lwt.async (fun () -> Daemon.start_resolver stack tcp resolver js_file get_cache);
+        Lwt.async (fun () ->
+            Daemon.start_resolver stack tcp resolver js_file get_cache);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
