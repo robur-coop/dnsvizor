@@ -351,10 +351,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           let lookup_stats name =
             match lookup_src_by_name name with
             | None -> []
-            | Some src ->
-              match Metrics.SM.find_opt src map with
-              | None -> []
-              | Some (_tags, data) -> Metrics.Data.fields data
+            | Some src -> (
+                match Metrics.SM.find_opt src map with
+                | None -> []
+                | Some (_tags, data) -> Metrics.Data.fields data)
           in
           let find_measurement fields field_name =
             let field =
@@ -380,9 +380,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (weight, capacity)
           in
           let resolver_timing =
-            let fields =
-              lookup_stats "dns-resolver-timings"
-            in
+            let fields = lookup_stats "dns-resolver-timings" in
             find_measurement fields "mean response"
           in
           let memory_stats =
