@@ -334,50 +334,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         unit =
      fun (ipaddr, port) protocol ?request:_ err _writer ->
       match protocol with
-      | Alpn.HTTP_1_1 _ -> assert false
+      | Alpn.HTTP_1_1 _ 
       | Alpn.H2 _ ->
           Logs.err (fun m ->
               m "Got an error from %a:%d: %a" Ipaddr.pp ipaddr port pp_error err)
 
-    let request :
-        type reqd headers request response ro wo.
-        _ ->
-        _ ->
-        HTTP.TLS.flow ->
-        Ipaddr.t * int ->
-        reqd ->
-        (reqd, headers, request, response, ro, wo) Alpn.protocol ->
-        string ->
-        unit =
-     fun resolver metrics_cache _flow (dst, port) reqd protocol js_file ->
-      match protocol with
-      | Alpn.HTTP_1_1 _ ->
-          assert false
-          (* HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use
-             with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2 *)
-      | Alpn.H2 (module Reqd) -> (
-          let reply ?(content_type = "text/html") reqd ?(headers = []) data =
-            let headers =
-              H2.Headers.of_list
-                ([
-                   ("content-type", content_type);
-                   ("content-legnth", string_of_int (String.length data));
-                 ]
-                @ headers)
-            in
-            let resp = H2.Response.create ~headers `OK in
-            Reqd.respond_with_string reqd resp data
-          in
-          Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
-          let request = Reqd.request reqd in
-          Logs.info (fun m ->
-              m "%a %s" H2.Method.pp_hum request.H2.Request.meth
-                request.H2.Request.target);
-          match (request.H2.Request.meth, request.H2.Request.target) with
-          | `GET, "/main.js" ->
-              reply ~content_type:"text/javascript" reqd js_file
-          | `GET, "/" | `GET, "/dashboard" ->
-              let map = metrics_cache () in
+    let web_ui_handler js_file metrics_cache req_method path =
+      match req_method, path with
+      | `GET, "/main.js" ->
+        Some (js_file, Some "text/javascript")
+      | `GET, "/" | `GET, "/dashboard" ->
+        let map = metrics_cache () in
               let lookup_src_by_name name =
                 List.find
                   (fun src -> Metrics.Src.name src = name)
@@ -395,7 +362,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 let value = Option.map Metrics.value field in
                 match value with
                 | Some (Metrics.V (Metrics.Uint, i)) -> (i :> int)
-                | _ -> 0
+                | _ -> -2
               in
               let resolv_stats =
                 let fields = lookup_stats (lookup_src_by_name "dns-resolver") in
@@ -414,8 +381,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 (weight, capacity)
               in
               let resolver_timing =
-                let fields = lookup_stats (lookup_src_by_name "dns-resolver-timing") in
-                find_measurement fields "mean"
+                let fields = lookup_stats (lookup_src_by_name "dns-resolver-timings") in
+                find_measurement fields "mean response"
               in
               let memory_stats =
                 let fields = lookup_stats (lookup_src_by_name "memory") in
@@ -434,15 +401,81 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let content =
                 Statistics.statistics_page resolv_stats dns_cache_stats resolver_timing memory_stats gc_stats
               in
-              reply reqd
-                (Dashboard.dashboard_layout ~content ())
+              Some (Dashboard.dashboard_layout ~content (), None)
           | `GET, "/querylog" ->
-              reply reqd
-                (Dashboard.dashboard_layout ~content:Query_logs.query_page ())
+             Some (Dashboard.dashboard_layout ~content:Query_logs.query_page (), None)
           | `GET, "/blocklist" ->
-              reply reqd
-                (Dashboard.dashboard_layout ~content:Blocklist.block_page ())
-          | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
+             Some (Dashboard.dashboard_layout ~content:Blocklist.block_page (), None)
+          | _ -> None
+ 
+    let request :
+        type reqd headers request response ro wo.
+        _ ->
+        _ ->
+        HTTP.TLS.flow ->
+        Ipaddr.t * int ->
+        reqd ->
+        (reqd, headers, request, response, ro, wo) Alpn.protocol ->
+        string ->
+        unit =
+     fun resolver metrics_cache _flow (dst, port) reqd protocol js_file ->
+      match protocol with
+      | Alpn.HTTP_1_1 (module Reqd) ->
+        Lwt.async (fun () ->
+        begin
+          let reply ?(content_type = "text/html") reqd ?(headers = []) data =
+            let headers =
+              H1.Headers.of_list
+                ([
+                   ("content-type", content_type);
+                   ("content-legnth", string_of_int (String.length data));
+                 ]
+                @ headers)
+            in
+            let resp = H1.Response.create ~headers `OK in
+            Reqd.respond_with_string reqd resp data;
+            Lwt.return_unit
+          in
+          Logs.info (fun m -> m "Got a new HTTPS request!");
+          let request = Reqd.request reqd in
+          Logs.info (fun m ->
+              m "%a %s" H1.Method.pp_hum request.H1.Request.meth
+                request.H1.Request.target);
+          match web_ui_handler js_file metrics_cache request.H1.Request.meth request.H1.Request.target with
+          | Some (content, content_type) ->
+            reply ?content_type reqd content
+          | None ->
+              let headers = H1.Headers.of_list [ ("connection", "close") ] in
+              let resp = H1.Response.create ~headers `Bad_request in
+              Reqd.respond_with_string reqd resp "";
+              Lwt.return_unit
+          (* HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use
+             with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2 *)
+        end)
+      | Alpn.H2 (module Reqd) -> (
+          let reply ?(content_type = "text/html") reqd ?(headers = []) data =
+            let headers =
+              H2.Headers.of_list
+                ([
+                   ("content-type", content_type);
+                   ("content-legnth", string_of_int (String.length data));
+                 ]
+                @ headers)
+            in
+            let resp = H2.Response.create ~headers `OK in
+            Reqd.respond_with_string reqd resp data
+          in
+          Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
+          let request = Reqd.request reqd in
+          Logs.info (fun m ->
+              m "%a %s" H2.Method.pp_hum request.H2.Request.meth
+                request.H2.Request.target);
+          match web_ui_handler js_file metrics_cache request.H2.Request.meth request.H2.Request.target with
+          | Some (content, content_type) ->
+            reply ?content_type reqd content
+          | None ->
+          match (request.H2.Request.meth, request.H2.Request.target) with
+         | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
               let target = request.H2.Request.target in
               let elts = String.split_on_char '=' target in
               let elts = List.tl elts in
@@ -524,7 +557,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Resolver.resolver stack ~root:true ~tls:dns_tls resolver
         in
         let tls =
-          Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert ()
+          Tls.Config.server ~alpn_protocols:[ "h2"; "http/1.1" ] ~certificates:own_cert ()
         in
         let tls = Result.get_ok tls in
         let h2 =
