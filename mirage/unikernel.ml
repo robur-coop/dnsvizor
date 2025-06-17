@@ -406,9 +406,36 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 in
                 (clients, queries, blocked_requests, errors)
               in
+              let dns_cache_stats =
+                let fields = lookup_stats (lookup_src_by_name "dns-cache") in
+                let weight = find_measurement fields "weight"
+                and capacity = find_measurement fields "capacity"
+                in
+                (weight, capacity)
+              in
+              let resolver_timing =
+                let fields = lookup_stats (lookup_src_by_name "dns-resolver-timing") in
+                find_measurement fields "mean"
+              in
+              let memory_stats =
+                let fields = lookup_stats (lookup_src_by_name "memory") in
+                let live = find_measurement fields "memory live words"
+                and free = find_measurement fields "memory free words"
+                in
+                (live, free)
+              in
+              let gc_stats =
+                let fields = lookup_stats (lookup_src_by_name "gc") in
+                let live = find_measurement fields Metrics.Key.live_words
+                and free = find_measurement fields Metrics.Key.free_words
+                in
+                (live, free)
+              in
+              let content =
+                Statistics.statistics_page resolv_stats dns_cache_stats resolver_timing memory_stats gc_stats
+              in
               reply reqd
-                (Dashboard.dashboard_layout ~content:(Statistics.statistics_page resolv_stats)
-                   ())
+                (Dashboard.dashboard_layout ~content ())
           | `GET, "/querylog" ->
               reply reqd
                 (Dashboard.dashboard_layout ~content:Query_logs.query_page ())
