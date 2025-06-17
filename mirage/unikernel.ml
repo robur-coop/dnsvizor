@@ -377,36 +377,37 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           | `GET, "/main.js" ->
               reply ~content_type:"text/javascript" reqd js_file
           | `GET, "/" | `GET, "/dashboard" ->
-              let stats = Resolver.stats resolver in
-              let cache_lookup_metrics =
-                let map = metrics_cache () in
-                let dns_cache_src =
-                  List.find
-                    (fun src -> Metrics.Src.name src = "dns-cache")
-                    (Metrics.Src.list ())
-                in
-                let dns_cache_metrics =
-                  match Metrics.SM.find_opt dns_cache_src map with
-                  | None ->
-                      print_endline "no dns-cache found";
-                      []
-                  | Some (_tags, data) -> Metrics.Data.fields data
-                in
-                List.iter
-                  (fun field -> print_endline ("field " ^ Metrics.key field))
-                  dns_cache_metrics;
-                match
-                  List.find_opt
-                    (fun field -> Metrics.key field = "lookups")
-                    dns_cache_metrics
-                with
-                | None -> 0
-                | Some data -> (
-                    match Metrics.value data with V (Uint, u) -> u | _ -> -1)
+              let map = metrics_cache () in
+              let lookup_src_by_name name =
+                List.find
+                  (fun src -> Metrics.Src.name src = name)
+                  (Metrics.Src.list ())
               in
-              print_endline ("lookups: " ^ string_of_int cache_lookup_metrics);
+              let lookup_stats src =
+                match Metrics.SM.find_opt src map with
+                | None -> []
+                | Some (_tags, data) -> Metrics.Data.fields data
+              in
+              let find_measurement fields field_name =
+                let field = List.find_opt
+                    (fun field -> Metrics.key field = field_name) fields
+                in
+                let value = Option.map Metrics.value field in
+                match value with
+                | Some (Metrics.V (Metrics.Uint, i)) -> (i :> int)
+                | _ -> 0
+              in
+              let resolv_stats =
+                let fields = lookup_stats (lookup_src_by_name "dns-resolver") in
+                let clients = find_measurement fields "clients"
+                and queries = find_measurement fields "queries"
+                and blocked_requests = find_measurement fields "blocked"
+                and errors = find_measurement fields "error"
+                in
+                (clients, queries, blocked_requests, errors)
+              in
               reply reqd
-                (Dashboard.dashboard_layout ~content:Statistics.statistics_page
+                (Dashboard.dashboard_layout ~content:(Statistics.statistics_page resolv_stats)
                    ())
           | `GET, "/querylog" ->
               reply reqd
@@ -414,10 +415,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           | `GET, "/blocklist" ->
               reply reqd
                 (Dashboard.dashboard_layout ~content:Blocklist.block_page ())
-          | `GET, "/config" ->
-              reply reqd
-                (Dashboard.dashboard_layout ~content:Statistics.statistics_page
-                   ())
           | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
               let target = request.H2.Request.target in
               let elts = String.split_on_char '=' target in
