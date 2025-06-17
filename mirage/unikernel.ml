@@ -465,6 +465,68 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let resp = H2.Response.create ~headers `Bad_request in
               Reqd.respond_with_string reqd resp "")
 
+    let request_handler js_file resolver metrics_cache (_ipaddr, _port) reqd =
+      Lwt.async (fun () ->
+      Logs.info (fun m -> m "Got a new HTTP request!");
+      let request = H1.Reqd.request reqd in
+      Logs.info (fun m ->
+          m "%a %s" H1.Method.pp_hum request.H1.Request.meth
+            request.H1.Request.target);
+      let reply ?(content_type = "text/html") reqd ?(headers = []) data =
+        let headers =
+          H1.Headers.of_list
+            ([
+              ("content-type", content_type);
+              ("content-length", string_of_int (String.length data));
+            ]
+              @ headers)
+        in
+        let resp = H1.Response.create ~headers `OK in
+        H1.Reqd.respond_with_string reqd resp data;
+        Lwt.return_unit
+      in
+      match (request.H1.Request.meth, request.H1.Request.target) with
+          | `GET, "/main.js" ->
+            reply ~content_type:"text/javascript" reqd js_file
+          | `GET, "/" | `GET, "/dashboard" ->
+            let stats = Resolver.stats resolver in
+            let cache_hits_metrics =
+              let map = metrics_cache () in
+              let dns_cache_src =
+                List.find (fun src -> Metrics.Src.name src = "dns-cache") (Metrics.Src.list ())
+              in
+              let dns_cache_metrics =
+                match Metrics.SM.find_opt dns_cache_src map with
+                | None ->
+                  print_endline "no dns-cache found";
+                  []
+                | Some (_tags, data) -> Metrics.Data.fields data
+              in
+              List.iter (fun field ->
+                  print_endline ("field " ^ Metrics.key field))
+                dns_cache_metrics;
+              match List.find_opt (fun field -> Metrics.key field = "hits") dns_cache_metrics with
+              | None -> -2
+              | Some data -> match Metrics.value data with
+                | V (Uint, u) -> u
+                | _ -> -1
+            in
+            print_endline ("hits: " ^ string_of_int cache_hits_metrics);
+            reply reqd
+              (Dashboard.dashboard_layout ~content:(Statistics.statistics_page stats)
+                 ())
+          | `GET, "/querylog" ->
+            reply reqd
+              (Dashboard.dashboard_layout ~content:Query_logs.query_page ())
+          | `GET, "/blocklist" ->
+            reply reqd
+              (Dashboard.dashboard_layout ~content:Blocklist.block_page ())
+          | _ ->
+            let headers = H1.Headers.of_list [ ("connection", "close") ] in
+            let resp = H1.Response.create ~headers `Bad_request in
+            H1.Reqd.respond_with_string reqd resp "";
+            Lwt.return_unit)
+
     let handler resolver js_file metrics_cache =
       {
         Alpn.error;
@@ -472,6 +534,16 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           (fun flow dst reqd protocol ->
             request resolver metrics_cache flow dst reqd protocol js_file);
       }
+
+    let pp_error ppf = function
+      | #H1.Status.t as code -> H1.Status.pp_hum ppf code
+      | `Exn exn -> Fmt.pf ppf "exception %s" (Printexc.to_string exn)
+
+    let error_handler _dst ?request err _ =
+      Logs.err (fun m ->
+          m "error %a while processing request %a" pp_error err
+            Fmt.(option ~none:(any "unknown") H1.Request.pp_hum)
+            request)
 
     let start_resolver stack tcp resolver js_file metrics_cache =
       let rec go (certificate, pk, _authenticator) =
@@ -500,7 +572,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         let h2 = HTTP.alpn_service ~tls (handler resolver js_file metrics_cache) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
-        Lwt.both (bell ()) th >>= fun _ ->
+        HTTP.init ~port:80 tcp >>= fun service ->
+        let request_handler _flow = request_handler js_file resolver metrics_cache in
+        let http = HTTP.http_service ~error_handler request_handler in
+        let (`Initialized th2) = HTTP.serve http service in
+        Lwt.join [ bell () ; th ; th2 ] >>= fun () ->
         let ca = CA.make (K.name ()) (K.ca_key ()) in
         go (Result.get_ok ca)
       in
