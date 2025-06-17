@@ -344,14 +344,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `GET, "/" | `GET, "/dashboard" ->
           let map = metrics_cache () in
           let lookup_src_by_name name =
-            List.find
+            List.find_opt
               (fun src -> Metrics.Src.name src = name)
               (Metrics.Src.list ())
           in
-          let lookup_stats src =
-            match Metrics.SM.find_opt src map with
+          let lookup_stats name =
+            match lookup_src_by_name name with
             | None -> []
-            | Some (_tags, data) -> Metrics.Data.fields data
+            | Some src ->
+              match Metrics.SM.find_opt src map with
+              | None -> []
+              | Some (_tags, data) -> Metrics.Data.fields data
           in
           let find_measurement fields field_name =
             let field =
@@ -363,7 +366,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             | _ -> -2
           in
           let resolv_stats =
-            let fields = lookup_stats (lookup_src_by_name "dns-resolver") in
+            let fields = lookup_stats "dns-resolver" in
             let clients = find_measurement fields "clients"
             and queries = find_measurement fields "queries"
             and blocked_requests = find_measurement fields "blocked"
@@ -371,25 +374,25 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (clients, queries, blocked_requests, errors)
           in
           let dns_cache_stats =
-            let fields = lookup_stats (lookup_src_by_name "dns-cache") in
+            let fields = lookup_stats "dns-cache" in
             let weight = find_measurement fields "weight"
             and capacity = find_measurement fields "capacity" in
             (weight, capacity)
           in
           let resolver_timing =
             let fields =
-              lookup_stats (lookup_src_by_name "dns-resolver-timings")
+              lookup_stats "dns-resolver-timings"
             in
             find_measurement fields "mean response"
           in
           let memory_stats =
-            let fields = lookup_stats (lookup_src_by_name "memory") in
+            let fields = lookup_stats "memory" in
             let live = find_measurement fields "memory live words"
             and free = find_measurement fields "memory free words" in
             (live, free)
           in
           let gc_stats =
-            let fields = lookup_stats (lookup_src_by_name "gc") in
+            let fields = lookup_stats "gc" in
             let live = find_measurement fields Metrics.Key.live_words
             and free = find_measurement fields Metrics.Key.free_words in
             (live, free)
