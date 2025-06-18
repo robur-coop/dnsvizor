@@ -647,7 +647,16 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     Metrics_lwt.init_periodic (fun () -> Mirage_sleep.ns (Duration.of_sec 10));
     let primary_t =
       (* setup DNS server state: *)
-      Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate Dns_trie.empty
+      let trie =
+        List.fold_left Blocklist.add_dns_entries Dns_trie.empty Blocklist.blocked_domains
+      in
+      let trie =
+        let ipv4_ttl = 3600l, Ipaddr.V4.Set.singleton (Ipaddr.V4.Prefix.address (K.ipv4 ())) in
+        let soa = Dns.Soa.create (K.name ()) in
+        Dns_trie.insert (K.name ()) Dns.Rr_map.A ipv4_ttl trie
+        |> Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa
+      in
+      Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate trie
     in
     (match K.dns_upstream () with
     | None ->
