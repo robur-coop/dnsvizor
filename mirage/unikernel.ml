@@ -334,13 +334,83 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         unit =
      fun (ipaddr, port) protocol ?request:_ err _writer ->
       match protocol with
-      | Alpn.HTTP_1_1 _ -> assert false
-      | Alpn.H2 _ ->
+      | Alpn.HTTP_1_1 _ | Alpn.H2 _ ->
           Logs.err (fun m ->
               m "Got an error from %a:%d: %a" Ipaddr.pp ipaddr port pp_error err)
 
+    let web_ui_handler js_file metrics_cache req_method path =
+      match (req_method, path) with
+      | `GET, "/main.js" -> Some (js_file, Some "text/javascript")
+      | `GET, "/" | `GET, "/dashboard" ->
+          let map = metrics_cache () in
+          let lookup_src_by_name name =
+            List.find_opt
+              (fun src -> Metrics.Src.name src = name)
+              (Metrics.Src.list ())
+          in
+          let lookup_stats name =
+            match lookup_src_by_name name with
+            | None -> []
+            | Some src -> (
+                match Metrics.SM.find_opt src map with
+                | None -> []
+                | Some (_tags, data) -> Metrics.Data.fields data)
+          in
+          let find_measurement fields field_name =
+            let field =
+              List.find_opt (fun field -> Metrics.key field = field_name) fields
+            in
+            let value = Option.map Metrics.value field in
+            match value with
+            | Some (Metrics.V (Metrics.Uint, i)) -> (i :> int)
+            | _ -> -2
+          in
+          let resolv_stats =
+            let fields = lookup_stats "dns-resolver" in
+            let clients = find_measurement fields "clients"
+            and queries = find_measurement fields "queries"
+            and blocked_requests = find_measurement fields "blocked"
+            and errors = find_measurement fields "error" in
+            (clients, queries, blocked_requests, errors)
+          in
+          let dns_cache_stats =
+            let fields = lookup_stats "dns-cache" in
+            let weight = find_measurement fields "weight"
+            and capacity = find_measurement fields "capacity" in
+            (weight, capacity)
+          in
+          let resolver_timing =
+            let fields = lookup_stats "dns-resolver-timings" in
+            find_measurement fields "mean response"
+          in
+          let memory_stats =
+            let fields = lookup_stats "memory" in
+            let live = find_measurement fields "memory live words"
+            and free = find_measurement fields "memory free words" in
+            (live, free)
+          in
+          let gc_stats =
+            let fields = lookup_stats "gc" in
+            let live = find_measurement fields Metrics.Key.live_words
+            and free = find_measurement fields Metrics.Key.free_words in
+            (live, free)
+          in
+          let content =
+            Statistics.statistics_page resolv_stats dns_cache_stats
+              resolver_timing memory_stats gc_stats
+          in
+          Some (Dashboard.dashboard_layout ~content (), None)
+      | `GET, "/querylog" ->
+          Some
+            (Dashboard.dashboard_layout ~content:Query_logs.query_page (), None)
+      | `GET, "/blocklist" ->
+          Some
+            (Dashboard.dashboard_layout ~content:Blocklist.block_page (), None)
+      | _ -> None
+
     let request :
         type reqd headers request response ro wo.
+        _ ->
         _ ->
         HTTP.TLS.flow ->
         Ipaddr.t * int ->
@@ -348,12 +418,43 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         string ->
         unit =
-     fun resolver _flow (dst, port) reqd protocol js_file ->
+     fun resolver metrics_cache _flow (dst, port) reqd protocol js_file ->
       match protocol with
-      | Alpn.HTTP_1_1 _ ->
-          assert false
-          (* HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use
-             with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2 *)
+      | Alpn.HTTP_1_1 (module Reqd) ->
+          Lwt.async (fun () ->
+              let reply ?(content_type = "text/html") reqd ?(headers = []) data
+                  =
+                let headers =
+                  H1.Headers.of_list
+                    ([
+                       ("content-type", content_type);
+                       ("content-legnth", string_of_int (String.length data));
+                     ]
+                    @ headers)
+                in
+                let resp = H1.Response.create ~headers `OK in
+                Reqd.respond_with_string reqd resp data;
+                Lwt.return_unit
+              in
+              Logs.info (fun m -> m "Got a new HTTPS request!");
+              let request = Reqd.request reqd in
+              Logs.info (fun m ->
+                  m "%a %s" H1.Method.pp_hum request.H1.Request.meth
+                    request.H1.Request.target);
+              match
+                web_ui_handler js_file metrics_cache request.H1.Request.meth
+                  request.H1.Request.target
+              with
+              | Some (content, content_type) -> reply ?content_type reqd content
+              | None ->
+                  let headers =
+                    H1.Headers.of_list [ ("connection", "close") ]
+                  in
+                  let resp = H1.Response.create ~headers `Bad_request in
+                  Reqd.respond_with_string reqd resp "";
+                  Lwt.return_unit
+              (* HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use
+                 with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2 *))
       | Alpn.H2 (module Reqd) -> (
           let reply ?(content_type = "text/html") reqd ?(headers = []) data =
             let headers =
@@ -372,85 +473,77 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Logs.info (fun m ->
               m "%a %s" H2.Method.pp_hum request.H2.Request.meth
                 request.H2.Request.target);
-          match (request.H2.Request.meth, request.H2.Request.target) with
-          | `GET, "/main.js" ->
-              reply ~content_type:"text/javascript" reqd js_file
-          | `GET, "/" | `GET, "/dashboard" ->
-              reply reqd
-                (Dashboard.dashboard_layout ~content:Statistics.statistics_page
-                   ())
-          | `GET, "/querylog" ->
-              reply reqd
-                (Dashboard.dashboard_layout ~content:Query_logs.query_page ())
-          | `GET, "/blocklist" ->
-              reply reqd
-                (Dashboard.dashboard_layout ~content:Blocklist.block_page ())
-          | `GET, "/config" ->
-              reply reqd
-                (Dashboard.dashboard_layout ~content:Statistics.statistics_page
-                   ())
-          | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
-              let target = request.H2.Request.target in
-              let elts = String.split_on_char '=' target in
-              let elts = List.tl elts in
-              let query = String.concat "=" elts in
-              Logs.info (fun m -> m "%s" query);
-              let query = Base64.decode_exn ~pad:false query in
-              let resolve () =
-                Resolver.resolve_external resolver (dst, port) query
-                >>= fun (ttl, answer) ->
-                reply ~content_type:"application/dns-message"
-                  ~headers:[ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
-                  reqd answer;
-                Lwt.return_unit
-              in
-              Lwt.async resolve
-          | `POST, path when String.starts_with ~prefix:"/dns-query" path ->
-              let target = request.H2.Request.target in
-              let initial_size =
-                Option.bind
-                  (H2.Headers.get request.headers "content-length")
-                  int_of_string_opt
-                |> Option.value ~default:65536
-              in
-              Logs.info (fun m -> m ">>> %S" target);
-              let response_body = H2.Reqd.request_body reqd in
-              let finished, notify_finished = Lwt.wait () in
-              let wakeup v = Lwt.wakeup_later notify_finished v in
-              let on_eof data () = wakeup (Buffer.contents data) in
-              let rec on_read on_eof acc bs ~off ~len =
-                let str = Bigstringaf.substring ~off ~len bs in
-                let () = Buffer.add_string acc str in
-                H2.Body.Reader.schedule_read response_body
-                  ~on_read:(on_read on_eof acc) ~on_eof:(on_eof acc)
-              in
-              let f_init = Buffer.create initial_size in
-              H2.Body.Reader.schedule_read response_body
-                ~on_read:(on_read on_eof f_init) ~on_eof:(on_eof f_init);
-              let resolve () =
-                finished >>= fun data ->
-                Resolver.resolve_external resolver (dst, port) data
-                >>= fun (ttl, answer) ->
-                reply ~content_type:"application/dns-message"
-                  ~headers:[ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
-                  reqd answer;
-                Lwt.return_unit
-              in
-              Lwt.async resolve
-          | _ ->
-              let headers = H2.Headers.of_list [ ("connection", "close") ] in
-              let resp = H2.Response.create ~headers `Bad_request in
-              Reqd.respond_with_string reqd resp "")
+          match
+            web_ui_handler js_file metrics_cache request.H2.Request.meth
+              request.H2.Request.target
+          with
+          | Some (content, content_type) -> reply ?content_type reqd content
+          | None -> (
+              match (request.H2.Request.meth, request.H2.Request.target) with
+              | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
+                  let target = request.H2.Request.target in
+                  let elts = String.split_on_char '=' target in
+                  let elts = List.tl elts in
+                  let query = String.concat "=" elts in
+                  Logs.info (fun m -> m "%s" query);
+                  let query = Base64.decode_exn ~pad:false query in
+                  let resolve () =
+                    Resolver.resolve_external resolver (dst, port) query
+                    >>= fun (ttl, answer) ->
+                    reply ~content_type:"application/dns-message"
+                      ~headers:[ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
+                      reqd answer;
+                    Lwt.return_unit
+                  in
+                  Lwt.async resolve
+              | `POST, path when String.starts_with ~prefix:"/dns-query" path ->
+                  let target = request.H2.Request.target in
+                  let initial_size =
+                    Option.bind
+                      (H2.Headers.get request.headers "content-length")
+                      int_of_string_opt
+                    |> Option.value ~default:65536
+                  in
+                  Logs.info (fun m -> m ">>> %S" target);
+                  let response_body = H2.Reqd.request_body reqd in
+                  let finished, notify_finished = Lwt.wait () in
+                  let wakeup v = Lwt.wakeup_later notify_finished v in
+                  let on_eof data () = wakeup (Buffer.contents data) in
+                  let rec on_read on_eof acc bs ~off ~len =
+                    let str = Bigstringaf.substring ~off ~len bs in
+                    let () = Buffer.add_string acc str in
+                    H2.Body.Reader.schedule_read response_body
+                      ~on_read:(on_read on_eof acc) ~on_eof:(on_eof acc)
+                  in
+                  let f_init = Buffer.create initial_size in
+                  H2.Body.Reader.schedule_read response_body
+                    ~on_read:(on_read on_eof f_init) ~on_eof:(on_eof f_init);
+                  let resolve () =
+                    finished >>= fun data ->
+                    Resolver.resolve_external resolver (dst, port) data
+                    >>= fun (ttl, answer) ->
+                    reply ~content_type:"application/dns-message"
+                      ~headers:[ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
+                      reqd answer;
+                    Lwt.return_unit
+                  in
+                  Lwt.async resolve
+              | _ ->
+                  let headers =
+                    H2.Headers.of_list [ ("connection", "close") ]
+                  in
+                  let resp = H2.Response.create ~headers `Bad_request in
+                  Reqd.respond_with_string reqd resp ""))
 
-    let handler resolver js_file =
+    let handler resolver js_file metrics_cache =
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request resolver flow dst reqd protocol js_file);
+            request resolver metrics_cache flow dst reqd protocol js_file);
       }
 
-    let start_resolver stack tcp resolver js_file =
+    let start_resolver stack tcp resolver js_file metrics_cache =
       let rec go (certificate, pk, _authenticator) =
         let seven_days_before_expire =
           let _, expiring = X509.Certificate.validity certificate in
@@ -471,10 +564,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Resolver.resolver stack ~root:true ~tls:dns_tls resolver
         in
         let tls =
-          Tls.Config.server ~alpn_protocols:[ "h2" ] ~certificates:own_cert ()
+          Tls.Config.server ~alpn_protocols:[ "h2"; "http/1.1" ]
+            ~certificates:own_cert ()
         in
         let tls = Result.get_ok tls in
-        let h2 = HTTP.alpn_service ~tls (handler resolver js_file) in
+        let h2 =
+          HTTP.alpn_service ~tls (handler resolver js_file metrics_cache)
+        in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         Lwt.both (bell ()) th >>= fun _ ->
@@ -546,6 +642,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     UDP.connect ip >>= fun udp ->
     TCP.connect ip >>= fun tcp ->
     S.connect net eth arp ip icmp udp tcp >>= fun stack ->
+    let get_cache, reporter = Metrics.cache_reporter () in
+    Metrics.set_reporter reporter;
+    Metrics.enable_all ();
+    Metrics_lwt.init_periodic (fun () -> Mirage_sleep.ns (Duration.of_sec 10));
     let primary_t =
       (* setup DNS server state: *)
       Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate Dns_trie.empty
@@ -558,7 +658,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        Lwt.async (fun () -> Daemon.start_resolver stack tcp resolver js_file);
+        Lwt.async (fun () ->
+            Daemon.start_resolver stack tcp resolver js_file get_cache);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);

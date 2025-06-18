@@ -1,4 +1,6 @@
-let statistics_page =
+let statistics_page (clients, queries, blocked_requests, errors)
+    (lru_weight, lru_capacity) mean_response_time (memory_live, memory_free)
+    (gc_live, gc_free) =
   Tyxml_html.(
     main
       ~a:[ a_class [ "w-full text-gray-900" ] ]
@@ -41,10 +43,14 @@ let statistics_page =
                       [
                         div
                           ~a:[ a_class [ "text-sm" ] ]
-                          [ txt "Total queries (5 clients)" ];
+                          [
+                            txt
+                              ("Total queries (" ^ string_of_int clients
+                             ^ " clients)");
+                          ];
                         div
                           ~a:[ a_class [ "text-2xl font-bold" ] ]
-                          [ txt "3,416" ];
+                          [ txt (string_of_int queries) ];
                       ];
                     div
                       ~a:
@@ -58,7 +64,7 @@ let statistics_page =
                           [ txt "Queries Blocked" ];
                         div
                           ~a:[ a_class [ "text-2xl font-bold" ] ]
-                          [ txt "491" ];
+                          [ txt (string_of_int blocked_requests) ];
                       ];
                     div
                       ~a:
@@ -72,7 +78,12 @@ let statistics_page =
                           [ txt "Percent Blocked" ];
                         div
                           ~a:[ a_class [ "text-2xl font-bold" ] ]
-                          [ txt "14.4%" ];
+                          [
+                            txt
+                              (Fmt.str "%.2f"
+                                 (float_of_int blocked_requests
+                                 /. float_of_int queries));
+                          ];
                       ];
                     div
                       ~a:
@@ -87,6 +98,127 @@ let statistics_page =
                         div
                           ~a:[ a_class [ "text-2xl font-bold" ] ]
                           [ txt "82,309" ];
+                      ];
+                  ];
+                div
+                  ~a:[ a_class [ "grid grid-cols-4 gap-4" ] ]
+                  [
+                    div
+                      ~a:
+                        [
+                          a_class
+                            [ "bg-cyan-500 text-white p-6 rounded shadow" ];
+                        ]
+                      [
+                        div
+                          ~a:[ a_class [ "text-sm" ] ]
+                          [ txt "DNS cache LRU fill percentage" ];
+                        div
+                          ~a:[ a_class [ "text-2xl font-bold" ] ]
+                          [
+                            Fmt.kstr txt "%.2f%%"
+                              (float_of_int lru_weight
+                             /. float_of_int lru_capacity *. 100.);
+                          ];
+                      ];
+                    div
+                      ~a:
+                        [
+                          a_class
+                            [ "bg-cyan-600 text-white p-6 rounded shadow" ];
+                        ]
+                      [
+                        div
+                          ~a:[ a_class [ "text-sm" ] ]
+                          [ txt "Mean response time" ];
+                        div
+                          ~a:[ a_class [ "text-2xl font-bold" ] ]
+                          [ Fmt.kstr txt "%u ms" mean_response_time ];
+                      ];
+                    div
+                      ~a:
+                        [
+                          a_class
+                            [ "bg-cyan-700 text-white p-6 rounded shadow" ];
+                        ]
+                      [
+                        div ~a:[ a_class [ "text-sm" ] ] [ txt "PLACEHOLDER" ];
+                        div
+                          ~a:[ a_class [ "text-2xl font-bold" ] ]
+                          [
+                            txt
+                              (Fmt.str "%.2f"
+                                 (float_of_int blocked_requests
+                                 /. float_of_int queries));
+                          ];
+                      ];
+                    div
+                      ~a:
+                        [
+                          a_class
+                            [ "bg-cyan-800 text-white p-6 rounded shadow" ];
+                        ]
+                      [
+                        div ~a:[ a_class [ "text-sm" ] ] [ txt "PLACEHOLDER" ];
+                        div
+                          ~a:[ a_class [ "text-2xl font-bold" ] ]
+                          [ txt "82,309" ];
+                      ];
+                  ];
+                div
+                  ~a:[ a_class [ "grid grid-cols-4 gap-4" ] ]
+                  [
+                    div
+                      ~a:
+                        [
+                          a_class
+                            [ "bg-cyan-500 text-white p-6 rounded shadow" ];
+                        ]
+                      [
+                        div ~a:[ a_class [ "text-sm" ] ] [ txt "Live memory" ];
+                        div
+                          ~a:[ a_class [ "text-2xl font-bold" ] ]
+                          [ txt (string_of_int (8 * memory_live)) ];
+                      ];
+                    div
+                      ~a:
+                        [
+                          a_class
+                            [ "bg-cyan-600 text-white p-6 rounded shadow" ];
+                        ]
+                      [
+                        div ~a:[ a_class [ "text-sm" ] ] [ txt "Free memory" ];
+                        div
+                          ~a:[ a_class [ "text-2xl font-bold" ] ]
+                          [ txt (string_of_int (8 * memory_free)) ];
+                      ];
+                    div
+                      ~a:
+                        [
+                          a_class
+                            [ "bg-cyan-700 text-white p-6 rounded shadow" ];
+                        ]
+                      [
+                        div
+                          ~a:[ a_class [ "text-sm" ] ]
+                          [ txt "GC live memory" ];
+                        div
+                          ~a:[ a_class [ "text-2xl font-bold" ] ]
+                          [ txt (string_of_int (8 * gc_live)) ];
+                      ];
+                    div
+                      ~a:
+                        [
+                          a_class
+                            [ "bg-cyan-800 text-white p-6 rounded shadow" ];
+                        ]
+                      [
+                        div
+                          ~a:[ a_class [ "text-sm" ] ]
+                          [ txt "GC free memory" ];
+                        div
+                          ~a:[ a_class [ "text-2xl font-bold" ] ]
+                          [ txt (string_of_int (8 * gc_free)) ];
                       ];
                   ];
                 div
