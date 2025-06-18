@@ -356,21 +356,21 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 | None -> []
                 | Some (_tags, data) -> Metrics.Data.fields data)
           in
-          let find_measurement fields field_name =
+          let find_measurement ?(default = -2) fields field_name =
             let field =
               List.find_opt (fun field -> Metrics.key field = field_name) fields
             in
             let value = Option.map Metrics.value field in
             match value with
             | Some (Metrics.V (Metrics.Uint, i)) -> (i :> int)
-            | _ -> -2
+            | _ -> default
           in
           let resolv_stats =
             let fields = lookup_stats "dns-resolver" in
-            let clients = find_measurement fields "clients"
-            and queries = find_measurement fields "queries"
-            and blocked_requests = find_measurement fields "blocked"
-            and errors = find_measurement fields "error" in
+            let clients = find_measurement ~default:0 fields "clients"
+            and queries = find_measurement ~default:0 fields "queries"
+            and blocked_requests = find_measurement ~default:0 fields "blocked"
+            and errors = find_measurement ~default:0 fields "error" in
             (clients, queries, blocked_requests, errors)
           in
           let dns_cache_stats =
@@ -381,7 +381,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           in
           let resolver_timing =
             let fields = lookup_stats "dns-resolver-timings" in
-            find_measurement fields "mean response"
+            find_measurement ~default:0 fields "mean response"
           in
           let memory_stats =
             let fields = lookup_stats "memory" in
