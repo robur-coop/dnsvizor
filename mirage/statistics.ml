@@ -9,11 +9,17 @@ let statistics_page (clients, queries, blocked_requests, errors)
     ("Queries blocked",
      string_of_int blocked_requests);
     ("Percent blocked",
-     Fmt.str "%.2f%%" (float_of_int blocked_requests /. float_of_int queries *. 100.));
+     if queries = 0 then
+       "N/A"
+     else
+       Fmt.str "%.2f%%" (float_of_int blocked_requests /. float_of_int queries *. 100.));
     ("Domains on blocklist",
      "82,309");
     ("DNS cache LRU fill percentage",
-     Fmt.str "%.2f%%" (float_of_int lru_weight /. float_of_int lru_capacity *. 100.));
+     if lru_capacity = 0 then
+       "N/A"
+     else
+       Fmt.str "%.2f%%" (float_of_int lru_weight /. float_of_int lru_capacity *. 100.));
     ("Mean response time",
      Fmt.str "%u ms" mean_response_time);
     ("Live memory",
