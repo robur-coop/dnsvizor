@@ -32,7 +32,7 @@ let statistics_page (clients, queries, blocked_requests, _errors)
                       [ txt "Robur" ];
                   ];
                 div
-                  ~a:[ a_class [ "grid grid-cols-4 gap-4" ] ]
+                  ~a:[ a_class [ "grid grid-cols-5 gap-4" ] ]
                   [
                     div
                       ~a:
@@ -99,10 +99,6 @@ let statistics_page (clients, queries, blocked_requests, _errors)
                           ~a:[ a_class [ "text-2xl font-bold" ] ]
                           [ txt "82,309" ];
                       ];
-                  ];
-                div
-                  ~a:[ a_class [ "grid grid-cols-4 gap-4" ] ]
-                  [
                     div
                       ~a:
                         [
@@ -135,39 +131,6 @@ let statistics_page (clients, queries, blocked_requests, _errors)
                           ~a:[ a_class [ "text-2xl font-bold" ] ]
                           [ Fmt.kstr txt "%u ms" mean_response_time ];
                       ];
-                    div
-                      ~a:
-                        [
-                          a_class
-                            [ "bg-cyan-700 text-white p-6 rounded shadow" ];
-                        ]
-                      [
-                        div ~a:[ a_class [ "text-sm" ] ] [ txt "PLACEHOLDER" ];
-                        div
-                          ~a:[ a_class [ "text-2xl font-bold" ] ]
-                          [
-                            txt
-                              (Fmt.str "%.2f"
-                                 (float_of_int blocked_requests
-                                 /. float_of_int queries));
-                          ];
-                      ];
-                    div
-                      ~a:
-                        [
-                          a_class
-                            [ "bg-cyan-800 text-white p-6 rounded shadow" ];
-                        ]
-                      [
-                        div ~a:[ a_class [ "text-sm" ] ] [ txt "PLACEHOLDER" ];
-                        div
-                          ~a:[ a_class [ "text-2xl font-bold" ] ]
-                          [ txt "82,309" ];
-                      ];
-                  ];
-                div
-                  ~a:[ a_class [ "grid grid-cols-4 gap-4" ] ]
-                  [
                     div
                       ~a:
                         [
