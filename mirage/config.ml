@@ -12,6 +12,7 @@ let dnsvizor =
       package ~pin "dnsvizor";
       package "logs";
       package "metrics";
+      package "metrics-lwt";
       package "dns";
       package "dns-client";
       package "dns-mirage";
