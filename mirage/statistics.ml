@@ -1,4 +1,4 @@
-let statistics_page (clients, queries, blocked_requests, errors)
+let statistics_page (clients, queries, blocked_requests, _errors)
     (lru_weight, lru_capacity) mean_response_time (memory_live, memory_free)
     (gc_live, gc_free) =
   Tyxml_html.(
