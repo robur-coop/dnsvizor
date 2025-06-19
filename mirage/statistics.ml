@@ -81,42 +81,6 @@ let statistics_page (clients, queries, blocked_requests, errors)
                              [ txt data ];
                          ])
                      elts);
-                div
-                  ~a:[ a_class [ "bg-white p-4 rounded shadow" ] ]
-                  [
-                    h3
-                      ~a:[ a_class [ "text-lg font-semibold mb-2" ] ]
-                      [ txt "Total queries over last 24 hours" ];
-                    div
-                      ~a:
-                        [
-                          a_class
-                            [ "h-40 bg-gray-100 flex items-end justify-around" ];
-                        ]
-                      [
-                        div ~a:[ a_class [ "w-2 bg-cyan-500 h-16" ] ] [];
-                        div ~a:[ a_class [ "w-2 bg-cyan-500 h-24" ] ] [];
-                        div ~a:[ a_class [ "w-2 bg-cyan-500 h-10" ] ] [];
-                      ];
-                  ];
-                div
-                  ~a:[ a_class [ "bg-white p-4 rounded shadow" ] ]
-                  [
-                    h3
-                      ~a:[ a_class [ "text-lg font-semibold mb-2" ] ]
-                      [ txt "Client activity over last 24 hours" ];
-                    div
-                      ~a:
-                        [
-                          a_class
-                            [ "h-40 bg-gray-100 flex items-end justify-around" ];
-                        ]
-                      [
-                        div ~a:[ a_class [ "w-2 bg-cyan-500 h-10" ] ] [];
-                        div ~a:[ a_class [ "w-2 bg-cyan-700 h-20" ] ] [];
-                        div ~a:[ a_class [ "w-2 bg-cyan-300 h-14" ] ] [];
-                      ];
-                  ];
               ];
           ];
       ])
