@@ -1,6 +1,6 @@
-let ipv6_ttl = (3600l,Ipaddr.V6.(Set.singleton localhost))
-let ipv4_ttl = (3600l,Ipaddr.V4.(Set.singleton localhost))
-let soa = (Dns.Soa.create (Domain_name.of_string_exn "localhost"))
+let ipv6_ttl = (3600l, Ipaddr.V6.(Set.singleton localhost))
+let ipv4_ttl = (3600l, Ipaddr.V4.(Set.singleton localhost))
+let soa = Dns.Soa.create (Domain_name.of_string_exn "localhost")
 
 let add_dns_entries trie name =
   trie

@@ -571,10 +571,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             let trie = Resolver.primary_data resolver in
             incr cntr;
             let domain =
-              Fmt.kstr Domain_name.of_string_exn
-                "ww%u.example.com" !cntr
+              Fmt.kstr Domain_name.of_string_exn "ww%u.example.com" !cntr
             in
-            Logs.app (fun m -> m "Adding domain %a to blocklist!" Domain_name.pp domain);
+            Logs.app (fun m ->
+                m "Adding domain %a to blocklist!" Domain_name.pp domain);
             let trie = Blocklist.add_dns_entries trie domain in
             Resolver.update_primary_data resolver trie >>= fun () ->
             loop (max 1 (s + s))
@@ -666,10 +666,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let primary_t =
       (* setup DNS server state: *)
       let trie =
-        List.fold_left Blocklist.add_dns_entries Dns_trie.empty Blocklist.blocked_domains
+        List.fold_left Blocklist.add_dns_entries Dns_trie.empty
+          Blocklist.blocked_domains
       in
       let trie =
-        let ipv4_ttl = 3600l, Ipaddr.V4.Set.singleton (Ipaddr.V4.Prefix.address (K.ipv4 ())) in
+        let ipv4_ttl =
+          (3600l, Ipaddr.V4.Set.singleton (Ipaddr.V4.Prefix.address (K.ipv4 ())))
+        in
         let soa = Dns.Soa.create (K.name ()) in
         Dns_trie.insert (K.name ()) Dns.Rr_map.A ipv4_ttl trie
         |> Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa
