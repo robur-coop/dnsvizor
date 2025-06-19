@@ -41,12 +41,7 @@ module CA = struct
       cacert_dn
     |> reword_error (msgf "%a" X509.Validation.pp_signature_error)
     >>= fun certificate ->
-    let fingerprint = X509.Certificate.fingerprint `SHA256 certificate in
-    let time () = Some (Mirage_ptime.now ()) in
-    let authenticator =
-      X509.Authenticator.cert_fingerprint ~time ~hash:`SHA256 ~fingerprint
-    in
-    Ok (certificate, pk, authenticator)
+    Ok (certificate, pk)
 end
 
 module K = struct
@@ -544,8 +539,39 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             request resolver flow dst reqd protocol js_file);
       }
 
+    let update_blocklist resolver : unit Lwt.t =
+      let cntr = ref 0 in
+      let rec loop s =
+        Mirage_sleep.ns (Duration.of_sec s) >>= fun () ->
+        let trie = Resolver.primary_data resolver in
+        incr cntr;
+        let domain =
+          Fmt.kstr Domain_name.of_string_exn "ww%u.example.com" !cntr
+        in
+        Logs.app (fun m ->
+            m "Adding domain %a to blocklist!" Domain_name.pp domain);
+        let trie = Blocklist.add_dns_entries trie domain in
+        Resolver.update_primary_data resolver trie >>= fun () ->
+        loop (max 1 (s + s))
+      in
+      loop 1
+
     let start_resolver stack tcp resolver js_file =
-      let rec go (certificate, pk, _authenticator) =
+      let fresh_tls () =
+        let ca = CA.make (K.name ()) (K.ca_key ()) in
+        let (cert, pk) = Result.get_ok ca in
+        let own_cert = `Single ([ cert ], pk) in
+        let dns_tls =
+          Tls.Config.server ~certificates:own_cert () |> Result.get_ok
+        in
+        let tls =
+          Tls.Config.server ~alpn_protocols:[ "h2"; "http/1.1" ]
+            ~certificates:own_cert ()
+        in
+        let tls = Result.get_ok tls in
+        (cert, dns_tls, tls)
+      in
+      let rec go (certificate, dns_tls, tls) resolver =
         let seven_days_before_expire =
           let _, expiring = X509.Certificate.validity certificate in
           let diff = Ptime.diff expiring (Mirage_ptime.now ()) in
@@ -557,45 +583,20 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Mirage_sleep.ns seven_days_before_expire >>= fun () ->
           Lwt_switch.turn_off stop
         in
-        let own_cert = `Single ([ certificate ], pk) in
-        let dns_tls =
-          Tls.Config.server ~certificates:own_cert () |> Result.get_ok
+        Resolver.update_tls resolver dns_tls;
+        let h2 =
+          HTTP.alpn_service ~tls (handler resolver js_file metrics_cache)
         in
-        let resolver =
-          Resolver.resolver stack ~root:true ~tls:dns_tls resolver
-        in
-        let update_blocklist : unit -> unit Lwt.t =
-          let cntr = ref 0 in
-          let rec loop s =
-            Mirage_sleep.ns (Duration.of_sec s) >>= fun () ->
-            let trie = Resolver.primary_data resolver in
-            incr cntr;
-            let domain =
-              Fmt.kstr Domain_name.of_string_exn "ww%u.example.com" !cntr
-            in
-            Logs.app (fun m ->
-                m "Adding domain %a to blocklist!" Domain_name.pp domain);
-            let trie = Blocklist.add_dns_entries trie domain in
-            Resolver.update_primary_data resolver trie >>= fun () ->
-            loop (max 1 (s + s))
-          in
-          fun () -> loop 1
-        in
-        Lwt.async update_blocklist;
-        let tls =
-          Tls.Config.server ~alpn_protocols:[ "h2"; "http/1.1" ]
-            ~certificates:own_cert ()
-        in
-        let tls = Result.get_ok tls in
-        let h2 = HTTP.alpn_service ~tls (handler resolver js_file) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         Lwt.both (bell ()) th >>= fun _ ->
-        let ca = CA.make (K.name ()) (K.ca_key ()) in
-        go (Result.get_ok ca)
+        go (fresh_tls ()) resolver
       in
-      let ca = CA.make (K.name ()) (K.ca_key ()) in
-      go (Result.get_ok ca)
+      let (cert, dns_tls, tls) = fresh_tls () in
+      let resolver = Resolver.resolver stack ~root:true ~tls:dns_tls resolver in
+      Lwt.async (fun () -> update_blocklist resolver);
+      go (cert, dns_tls, tls) resolver
+
   end
 
   let start net assets =
