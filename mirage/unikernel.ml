@@ -338,11 +338,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Logs.err (fun m ->
               m "Got an error from %a:%d: %a" Ipaddr.pp ipaddr port pp_error err)
 
-    let web_ui_handler js_file metrics_cache req_method path =
+    let web_ui_handler js_file req_method path =
       match (req_method, path) with
       | `GET, "/main.js" -> Some (js_file, Some "text/javascript")
       | `GET, "/" | `GET, "/dashboard" ->
-          let map = metrics_cache () in
+          let map = Metrics.get_cache () in
           let lookup_src_by_name name =
             List.find_opt
               (fun src -> Metrics.Src.name src = name)
@@ -352,9 +352,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             match lookup_src_by_name name with
             | None -> []
             | Some src -> (
+                (* TODO handle multiple measurements with different tags? *)
                 match Metrics.SM.find_opt src map with
                 | None -> []
-                | Some (_tags, data) -> Metrics.Data.fields data)
+                | Some ((_tags, data) :: _) -> Metrics.Data.fields data
+                | Some [] -> [])
           in
           let find_measurement ?(default = -2) fields field_name =
             let field =
@@ -411,14 +413,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let request :
         type reqd headers request response ro wo.
         _ ->
-        _ ->
         HTTP.TLS.flow ->
         Ipaddr.t * int ->
         reqd ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         string ->
         unit =
-     fun resolver metrics_cache _flow (dst, port) reqd protocol js_file ->
+     fun resolver _flow (dst, port) reqd protocol js_file ->
       match protocol with
       | Alpn.HTTP_1_1 (module Reqd) ->
           Lwt.async (fun () ->
@@ -442,7 +443,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   m "%a %s" H1.Method.pp_hum request.H1.Request.meth
                     request.H1.Request.target);
               match
-                web_ui_handler js_file metrics_cache request.H1.Request.meth
+                web_ui_handler js_file request.H1.Request.meth
                   request.H1.Request.target
               with
               | Some (content, content_type) -> reply ?content_type reqd content
@@ -474,7 +475,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               m "%a %s" H2.Method.pp_hum request.H2.Request.meth
                 request.H2.Request.target);
           match
-            web_ui_handler js_file metrics_cache request.H2.Request.meth
+            web_ui_handler js_file request.H2.Request.meth
               request.H2.Request.target
           with
           | Some (content, content_type) -> reply ?content_type reqd content
@@ -535,15 +536,15 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   let resp = H2.Response.create ~headers `Bad_request in
                   Reqd.respond_with_string reqd resp ""))
 
-    let handler resolver js_file metrics_cache =
+    let handler resolver js_file =
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request resolver metrics_cache flow dst reqd protocol js_file);
+            request resolver flow dst reqd protocol js_file);
       }
 
-    let start_resolver stack tcp resolver js_file metrics_cache =
+    let start_resolver stack tcp resolver js_file =
       let rec go (certificate, pk, _authenticator) =
         let seven_days_before_expire =
           let _, expiring = X509.Certificate.validity certificate in
@@ -568,9 +569,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             ~certificates:own_cert ()
         in
         let tls = Result.get_ok tls in
-        let h2 =
-          HTTP.alpn_service ~tls (handler resolver js_file metrics_cache)
-        in
+        let h2 = HTTP.alpn_service ~tls (handler resolver js_file) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         Lwt.both (bell ()) th >>= fun _ ->
@@ -642,7 +641,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     UDP.connect ip >>= fun udp ->
     TCP.connect ip >>= fun tcp ->
     S.connect net eth arp ip icmp udp tcp >>= fun stack ->
-    let get_cache, reporter = Metrics.cache_reporter () in
+    let reporter = Metrics.cache_reporter () in
     Metrics.set_reporter reporter;
     Metrics.enable_all ();
     Metrics_lwt.init_periodic (fun () -> Mirage_sleep.ns (Duration.of_sec 10));
@@ -658,8 +657,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        Lwt.async (fun () ->
-            Daemon.start_resolver stack tcp resolver js_file get_cache);
+        Lwt.async (fun () -> Daemon.start_resolver stack tcp resolver js_file);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);

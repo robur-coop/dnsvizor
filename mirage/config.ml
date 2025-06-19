@@ -11,7 +11,7 @@ let dnsvizor =
     [
       package ~pin "dnsvizor";
       package "logs";
-      package "metrics";
+      package ~min:"0.5.0" "metrics";
       package "dns";
       package "dns-client";
       package "dns-mirage";
