@@ -564,6 +564,24 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         let resolver =
           Resolver.resolver stack ~root:true ~tls:dns_tls resolver
         in
+        let update_blocklist : unit -> unit Lwt.t =
+          let cntr = ref 0 in
+          let rec loop s =
+            Mirage_sleep.ns (Duration.of_sec s) >>= fun () ->
+            let trie = Resolver.primary_data resolver in
+            incr cntr;
+            let domain =
+              Fmt.kstr Domain_name.of_string_exn
+                "ww%u.example.com" !cntr
+            in
+            Logs.app (fun m -> m "Adding domain %a to blocklist!" Domain_name.pp domain);
+            let trie = Blocklist.add_dns_entries trie domain in
+            Resolver.update_primary_data resolver trie >>= fun () ->
+            loop (max 1 (s + s))
+          in
+          fun () -> loop 1
+        in
+        Lwt.async update_blocklist;
         let tls =
           Tls.Config.server ~alpn_protocols:[ "h2"; "http/1.1" ]
             ~certificates:own_cert ()
