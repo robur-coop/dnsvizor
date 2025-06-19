@@ -569,9 +569,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             ~certificates:own_cert ()
         in
         let tls = Result.get_ok tls in
-        let h2 =
-          HTTP.alpn_service ~tls (handler resolver js_file)
-        in
+        let h2 = HTTP.alpn_service ~tls (handler resolver js_file) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         Lwt.both (bell ()) th >>= fun _ ->
@@ -659,8 +657,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        Lwt.async (fun () ->
-            Daemon.start_resolver stack tcp resolver js_file);
+        Lwt.async (fun () -> Daemon.start_resolver stack tcp resolver js_file);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
