@@ -551,7 +551,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         Logs.app (fun m ->
             m "Adding domain %a to blocklist!" Domain_name.pp domain);
         let trie = Blocklist.add_dns_entries trie domain in
-        Resolver.update_primary_data resolver trie >>= fun () ->
+        Resolver.update_primary_data resolver trie;
         loop (max 1 (s + s))
       in
       loop 1
