@@ -20,6 +20,10 @@ let blocked_domains =
     Domain_name.of_string_exn "www.example.org.hsd1.mn.comcast.net";
   ]
 
+let blocklist_of_string s =
+  (* TODO: stub *)
+  [ Domain_name.of_string_exn "www.example.com" ]
+
 let delete_button =
   Tyxml_html.(
     button

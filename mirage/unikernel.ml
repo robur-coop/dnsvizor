@@ -86,6 +86,14 @@ module K = struct
     in
     Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 
+  let dns_blocklist =
+    let doc =
+      Arg.info
+        ~doc:"A web address to fetch DNS block lists from."
+        [ "dns-blocklist-url" ]
+    in
+    Mirage_runtime.register_arg Arg.(value & opt_all string [] doc)
+
   (* DNSmasq configuration options *)
   (* TODO support multiple dhcp-range statements *)
   let dhcp_range =
@@ -311,6 +319,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module Resolver = Dns_resolver_mirage.Make (S)
   module Stub = Dns_stub_mirage.Make (S)
   module HTTP = Paf_mirage.Make (TCP)
+  module HE = Happy_eyeballs_mirage.Make(S)
+  module Dns_client = Dns_client_mirage.Make(S)(HE)
+  module Mimic_he = Mimic_happy_eyeballs.Make(S)(HE)(Dns_client)
+  module Http_client = Http_mirage_client.Make(TCP)(Mimic_he)
 
   module Daemon = struct
     let pp_error ppf = function
@@ -350,8 +362,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 (* TODO handle multiple measurements with different tags? *)
                 match Metrics.SM.find_opt src map with
                 | None -> []
-                | Some ((_tags, data) :: _) -> Metrics.Data.fields data
-                | Some [] -> [])
+                | Some datas -> List.concat_map (fun (_tag, data) -> Metrics.Data.fields data) datas)
           in
           let find_measurement ?(default = -2) fields field_name =
             let field =
@@ -539,7 +550,36 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             request resolver flow dst reqd protocol js_file);
       }
 
-    let update_blocklist resolver : unit Lwt.t =
+    let update_blocklist http_client resolver : unit Lwt.t =
+      let update_one source =
+        let ingest resp acc data =
+          if H2.Status.is_successful resp.Http_mirage_client.status then
+            Buffer.add_string acc data;
+          Lwt.return acc
+        in
+        Http_mirage_client.request http_client source ingest (Buffer.create 65536) >>= function
+        | Error e ->
+          Logs.warn (fun m -> m "Failed retrieving blocklist from %S: %a" source Mimic.pp_error e);
+          Lwt.return_unit
+        | Ok (resp, acc) ->
+          if H2.Status.is_successful resp.status then
+            let blocklist = Buffer.contents acc in
+            Logs.info (fun m -> m "Retrieved data:@ %s" blocklist);
+            let blocklist = Blocklist.blocklist_of_string blocklist in
+            let trie = Resolver.primary_data resolver in
+            let trie = List.fold_left Blocklist.add_dns_entries trie blocklist in
+            Resolver.update_primary_data resolver trie;
+            Lwt.return_unit
+          else
+            let () =
+              Logs.warn (fun m -> m "Failed retrieving blocklist from %S: %a"
+                            source H2.Status.pp_hum resp.status)
+            in
+            Lwt.return_unit
+
+      in
+      Lwt_list.iter_p update_one (K.dns_blocklist ())
+        (*
       let cntr = ref 0 in
       let rec loop s =
         Mirage_sleep.ns (Duration.of_sec s) >>= fun () ->
@@ -555,8 +595,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         loop (max 1 (s + s))
       in
       loop 1
+           *)
 
-    let start_resolver stack tcp resolver js_file =
+    let start_resolver stack tcp resolver http_client js_file =
       let fresh_tls () =
         let ca = CA.make (K.name ()) (K.ca_key ()) in
         let (cert, pk) = Result.get_ok ca in
@@ -585,7 +626,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         in
         Resolver.update_tls resolver dns_tls;
         let h2 =
-          HTTP.alpn_service ~tls (handler resolver js_file metrics_cache)
+          HTTP.alpn_service ~tls (handler resolver js_file)
         in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
@@ -594,7 +635,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       let (cert, dns_tls, tls) = fresh_tls () in
       let resolver = Resolver.resolver stack ~root:true ~tls:dns_tls resolver in
-      Lwt.async (fun () -> update_blocklist resolver);
+      Lwt.async (fun () -> update_blocklist http_client resolver);
       go (cert, dns_tls, tls) resolver
 
   end
@@ -660,6 +701,26 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     UDP.connect ip >>= fun udp ->
     TCP.connect ip >>= fun tcp ->
     S.connect net eth arp ip icmp udp tcp >>= fun stack ->
+    HE.connect_device stack >>= fun he ->
+    Dns_client.connect (stack, he) >>= fun dns_client ->
+    let getaddrinfo v4_or_v6 nam =
+      match v4_or_v6 with
+      | `A ->
+        Dns_client.getaddrinfo dns_client Dns.Rr_map.A nam >|=
+        Result.map (fun (_ttl, v4s) ->
+            Ipaddr.V4.Set.to_seq v4s
+            |> Seq.map (fun v4 -> Ipaddr.V4 v4)
+            |> Ipaddr.Set.of_seq)
+      | `AAAA ->
+        Dns_client.getaddrinfo dns_client Dns.Rr_map.Aaaa nam >|=
+        Result.map (fun (_ttl, v6s) ->
+            Ipaddr.V6.Set.to_seq v6s
+            |> Seq.map (fun v6 -> Ipaddr.V6 v6)
+            |> Ipaddr.Set.of_seq)
+    in
+    HE.inject he getaddrinfo;
+    let ctx = Mimic.add Mimic_he.happy_eyeballs he Mimic.empty in
+    Http_client.connect ctx >>= fun http_client ->
     let reporter = Metrics.cache_reporter () in
     Metrics.set_reporter reporter;
     Metrics.enable_all ();
@@ -667,15 +728,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let primary_t =
       (* setup DNS server state: *)
       let trie =
-        List.fold_left Blocklist.add_dns_entries Dns_trie.empty
-          Blocklist.blocked_domains
-      in
-      let trie =
         let ipv4_ttl =
           (3600l, Ipaddr.V4.Set.singleton (Ipaddr.V4.Prefix.address (K.ipv4 ())))
         in
         let soa = Dns.Soa.create (K.name ()) in
-        Dns_trie.insert (K.name ()) Dns.Rr_map.A ipv4_ttl trie
+        Dns_trie.insert (K.name ()) Dns.Rr_map.A ipv4_ttl Dns_trie.empty
         |> Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa
       in
       Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate trie
@@ -688,7 +745,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
-        Lwt.async (fun () -> Daemon.start_resolver stack tcp resolver js_file);
+        Lwt.async (fun () ->
+            Daemon.start_resolver stack tcp resolver http_client js_file);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
