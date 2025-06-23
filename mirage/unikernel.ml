@@ -575,7 +575,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Logs.info (fun m -> m "Retrieved data:@ %s" blocklist);
             let blocklist = Blocklist.blocklist_of_string blocklist in
             let trie = Resolver.primary_data resolver in
-            let trie = List.fold_left (Blocklist.add_dns_entries source) trie blocklist in
+            let trie = Blocklist.update_from_source trie source blocklist in
             Resolver.update_primary_data resolver trie;
             Lwt.return_unit
           else
@@ -586,7 +586,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Lwt.return_unit
 
       in
-      Lwt_list.iter_p update_one (K.dns_blocklist ())
+      let rec repeatedly_update_one source =
+        update_one source >>= fun () ->
+        Mirage_sleep.ns (Duration.of_sec 1) >>= fun () ->
+        repeatedly_update_one source
+      in
+      Lwt_list.iter_p repeatedly_update_one (K.dns_blocklist ())
 
     let start_resolver stack tcp resolver http_client js_file =
       let fresh_tls () =
