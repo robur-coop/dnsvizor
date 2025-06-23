@@ -621,7 +621,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
-        Lwt.pick [bell (); th] >>= fun () ->
+        (* Due to the Lwt_switch [stop] [bell] will shut down the web server so
+           we can safely wait for both. *)
+        Lwt.both (bell ()) th >>= fun _ ->
         go (fresh_tls ()) resolver
       in
       let (cert, dns_tls, tls) = fresh_tls () in
