@@ -124,7 +124,7 @@ let block_page blocked_domains =
                       a_class
                         [ "text-2xl font-semibold mt-8 mb-4 text-cyan-700" ];
                     ]
-                  [ txt "Exact blocking" ];
+                  [ txt "Blocked domains" ];
                 ul
                   ~a:
                     [

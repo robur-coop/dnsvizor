@@ -587,23 +587,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
       in
       Lwt_list.iter_p update_one (K.dns_blocklist ())
-        (*
-      let cntr = ref 0 in
-      let rec loop s =
-        Mirage_sleep.ns (Duration.of_sec s) >>= fun () ->
-        let trie = Resolver.primary_data resolver in
-        incr cntr;
-        let domain =
-          Fmt.kstr Domain_name.of_string_exn "ww%u.example.com" !cntr
-        in
-        Logs.app (fun m ->
-            m "Adding domain %a to blocklist!" Domain_name.pp domain);
-        let trie = Blocklist.add_dns_entries trie domain in
-        Resolver.update_primary_data resolver trie;
-        loop (max 1 (s + s))
-      in
-      loop 1
-           *)
 
     let start_resolver stack tcp resolver http_client js_file =
       let fresh_tls () =
