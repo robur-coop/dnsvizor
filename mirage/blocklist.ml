@@ -7,6 +7,13 @@ let soa blocklist_source =
   Dns.Soa.create blocked_nameserver
     ~hostmaster
 
+let blocklist_source_of_soa soa : string option =
+  let s = Domain_name.to_string soa.Dns.Soa.hostmaster in
+  if String.starts_with s ~prefix:"https://" ||
+     String.starts_with s ~prefix:"http://" then
+    Some s
+  else None
+
 let add_dns_entries blocklist_source trie name =
   Dns_trie.insert name Dns.Rr_map.Soa (soa blocklist_source) trie
 
@@ -36,11 +43,17 @@ let delete_button =
         ]
       [ txt "Delete" ])
 
-let blocked_row (domain, _soa) =
+let blocked_row (domain, soa) =
   Tyxml_html.(
     li
       ~a:[ a_class [ "flex justify-between items-center py-2 px-4" ] ]
-      [ txt (Domain_name.to_string ~trailing:true domain); delete_button ])
+      [ txt (Domain_name.to_string ~trailing:true domain);
+        div [
+          match blocklist_source_of_soa soa with
+          | None -> txt "Unknown"
+          | Some source -> a ~a:[a_href source] [ txt source ]
+        ];
+        delete_button ])
 
 let block_page blocked_domains =
   Tyxml_html.(
