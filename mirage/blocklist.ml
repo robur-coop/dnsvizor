@@ -80,19 +80,26 @@ let parse_domain_file str =
 let blocklist_of_string s =
   parse_domain_file s
 
-let delete_button =
+let delete_button domain =
   Tyxml_html.(
-    button
-      ~a:
-        [
-          a_class
+    form
+      ~a:[
+        Fmt.kstr a_action "/blocklist/delete/%a" Domain_name.pp domain;
+        a_method `Post;
+      ]
+      [
+        button
+          ~a:
             [
-              "bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-2 \
-               rounded transition duration-200";
-              "focus:outline-none focus:ring-2 focus:ring-red-400";
-            ];
-        ]
-      [ txt "Delete" ])
+              a_class
+                [
+                  "bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-2 \
+                   rounded transition duration-200";
+                  "focus:outline-none focus:ring-2 focus:ring-red-400";
+                ];
+            ]
+          [ txt "Delete" ]
+      ])
 
 let blocked_row (domain, soa) =
   Tyxml_html.(
@@ -104,7 +111,7 @@ let blocked_row (domain, soa) =
           | None -> txt "Unknown"
           | Some source -> a ~a:[a_href source] [ txt source ]
         ];
-        delete_button ])
+        delete_button domain ])
 
 let block_page blocked_domains =
   Tyxml_html.(
@@ -120,8 +127,12 @@ let block_page blocked_domains =
                   ~a:
                     [ a_class [ "text-4xl font-extrabold mb-6 text-cyan-600" ] ]
                   [ txt "Blocklist" ];
-                div
-                  ~a:[ a_class [ "flex mb-4 gap-2" ] ]
+                form
+                  ~a:[
+                    a_action "/blocklist/add";
+                    a_method `Post;
+                    a_class [ "flex mb-4 gap-2" ]
+                  ]
                   [
                     input
                       ~a:
@@ -147,29 +158,7 @@ let block_page blocked_domains =
                                duration-200";
                             ];
                         ]
-                      [ txt "Add (exact)" ];
-                    button
-                      ~a:
-                        [
-                          a_class
-                            [
-                              "bg-cyan-500 hover:bg-cyan-600 text-white \
-                               font-semibold px-4 py-2 rounded transition \
-                               duration-200";
-                            ];
-                        ]
-                      [ txt "Add (wildcard)" ];
-                    button
-                      ~a:
-                        [
-                          a_class
-                            [
-                              "bg-cyan-500 hover:bg-cyan-600 text-white \
-                               font-semibold px-4 py-2 rounded transition \
-                               duration-200";
-                            ];
-                        ]
-                      [ txt "Add (regex)" ];
+                      [ txt "Add" ];
                     button
                       ~a:
                         [

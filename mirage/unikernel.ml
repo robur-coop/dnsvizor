@@ -422,6 +422,26 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           in
           Some
             (Dashboard.dashboard_layout ~content (), None)
+      | `POST, "/blocklist/add" ->
+          (* TODO: we can't get the body here oh no *)
+          None
+      | `POST, s when String.starts_with s ~prefix:"/blocklist/delete/" ->
+        (* NOTE: here we don't need the body because we embed in the path *)
+        let off = String.length "/blocklist/delete/" in
+        let domain = String.sub s off (String.length s - off) in
+        (match Domain_name.of_string domain with
+         | Error _ ->
+           None
+         | Ok domain ->
+           let trie = Resolver.primary_data resolver in
+           let trie = Dns_trie.remove_all domain trie in
+           Resolver.update_primary_data resolver trie;
+           (* FIXME: redirect to /blocklist *)
+           let content =
+             Blocklist.block_page (Blocklist.blocked_domains (Resolver.primary_data resolver))
+           in
+           Some
+             (Dashboard.dashboard_layout ~content (), None))
       | _ -> None
 
     let request :
@@ -588,7 +608,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       let rec repeatedly_update_one source =
         update_one source >>= fun () ->
-        Mirage_sleep.ns (Duration.of_sec 1) >>= fun () ->
+        Mirage_sleep.ns (Duration.of_sec 10) >>= fun () ->
         repeatedly_update_one source
       in
       Lwt_list.iter_p repeatedly_update_one (K.dns_blocklist ())
