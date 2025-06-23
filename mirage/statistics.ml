@@ -1,6 +1,8 @@
 let statistics_page (clients, queries, blocked_requests, errors)
     (lru_weight, lru_capacity) mean_response_time (memory_live, memory_free)
-    (gc_live, gc_free) =
+    (gc_live, gc_free)
+    domains_on_blocklist
+  =
   let elts =
     [
       ( "Total queries (" ^ string_of_int clients ^ " clients)",
@@ -12,7 +14,7 @@ let statistics_page (clients, queries, blocked_requests, errors)
         else
           Fmt.str "%.2f%%"
             (float_of_int blocked_requests /. float_of_int queries *. 100.) );
-      ("Domains on blocklist", "82,309");
+      ("Domains on blocklist", string_of_int domains_on_blocklist);
       ( "DNS cache LRU fill percentage",
         if lru_capacity = 0 then "N/A"
         else

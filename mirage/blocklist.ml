@@ -1,24 +1,22 @@
-let ipv6_ttl = (3600l, Ipaddr.V6.(Set.singleton localhost))
-let ipv4_ttl = (3600l, Ipaddr.V4.(Set.singleton localhost))
-let soa = Dns.Soa.create (Domain_name.of_string_exn "localhost")
+let blocked_nameserver = Domain_name.of_string_exn "blocked"
+let soa blocklist_source =
+  let hostmaster =
+    (* TODO: sanitize [blocklist_source] *)
+    Domain_name.of_string_exn blocklist_source
+  in
+  Dns.Soa.create blocked_nameserver
+    ~hostmaster
 
-let add_dns_entries trie name =
-  trie
-  |> Dns_trie.insert name Dns.Rr_map.A ipv4_ttl
-  |> Dns_trie.insert name Dns.Rr_map.Aaaa ipv6_ttl
-  |> Dns_trie.insert name Dns.Rr_map.Soa soa
+let add_dns_entries blocklist_source trie name =
+  Dns_trie.insert name Dns.Rr_map.Soa (soa blocklist_source) trie
 
-let blocked_domains =
-  [
-    Domain_name.of_string_exn "googleadapis.l.google.com";
-    Domain_name.of_string_exn "imasdk.googleapis.com";
-    Domain_name.of_string_exn "www.example.com";
-    Domain_name.of_string_exn "www.example.com.hsd1.mn.comcast.net";
-    Domain_name.of_string_exn "www.example.net";
-    Domain_name.of_string_exn "www.example.net.hsd1.mn.comcast.net";
-    Domain_name.of_string_exn "www.example.org";
-    Domain_name.of_string_exn "www.example.org.hsd1.mn.comcast.net";
-  ]
+let blocked_domains trie =
+  Dns_trie.fold Dns.Rr_map.Soa trie
+    (fun nam soa acc ->
+       if Domain_name.equal soa.nameserver blocked_nameserver then
+         (nam, soa) :: acc
+       else acc)
+    []
 
 let blocklist_of_string s =
   (* TODO: stub *)
@@ -38,13 +36,13 @@ let delete_button =
         ]
       [ txt "Delete" ])
 
-let blocked_row domain =
+let blocked_row (domain, _soa) =
   Tyxml_html.(
     li
       ~a:[ a_class [ "flex justify-between items-center py-2 px-4" ] ]
       [ txt (Domain_name.to_string ~trailing:true domain); delete_button ])
 
-let block_page =
+let block_page blocked_domains =
   Tyxml_html.(
     main
       ~a:[ a_class [ "w-full bg-gray-50 text-gray-900 min-h-screen" ] ]

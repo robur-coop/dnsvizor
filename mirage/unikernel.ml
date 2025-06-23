@@ -345,7 +345,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Logs.err (fun m ->
               m "Got an error from %a:%d: %a" Ipaddr.pp ipaddr port pp_error err)
 
-    let web_ui_handler js_file req_method path =
+    let web_ui_handler resolver js_file req_method path =
       match (req_method, path) with
       | `GET, "/main.js" -> Some (js_file, Some "text/javascript")
       | `GET, "/" | `GET, "/dashboard" ->
@@ -403,17 +403,25 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             and free = find_measurement fields Metrics.Key.free_words in
             (live, free)
           in
+          let domains_on_blocklist =
+            Blocklist.blocked_domains
+              (Resolver.primary_data resolver)
+            |> List.length
+          in
           let content =
             Statistics.statistics_page resolv_stats dns_cache_stats
-              resolver_timing memory_stats gc_stats
+              resolver_timing memory_stats gc_stats domains_on_blocklist
           in
           Some (Dashboard.dashboard_layout ~content (), None)
       | `GET, "/querylog" ->
           Some
             (Dashboard.dashboard_layout ~content:Query_logs.query_page (), None)
       | `GET, "/blocklist" ->
+          let content =
+            Blocklist.block_page (Blocklist.blocked_domains (Resolver.primary_data resolver))
+          in
           Some
-            (Dashboard.dashboard_layout ~content:Blocklist.block_page (), None)
+            (Dashboard.dashboard_layout ~content (), None)
       | _ -> None
 
     let request :
@@ -449,7 +457,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   m "%a %s" H1.Method.pp_hum request.H1.Request.meth
                     request.H1.Request.target);
               match
-                web_ui_handler js_file request.H1.Request.meth
+                web_ui_handler resolver js_file request.H1.Request.meth
                   request.H1.Request.target
               with
               | Some (content, content_type) -> reply ?content_type reqd content
@@ -481,7 +489,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               m "%a %s" H2.Method.pp_hum request.H2.Request.meth
                 request.H2.Request.target);
           match
-            web_ui_handler js_file request.H2.Request.meth
+            web_ui_handler resolver js_file request.H2.Request.meth
               request.H2.Request.target
           with
           | Some (content, content_type) -> reply ?content_type reqd content
@@ -567,7 +575,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Logs.info (fun m -> m "Retrieved data:@ %s" blocklist);
             let blocklist = Blocklist.blocklist_of_string blocklist in
             let trie = Resolver.primary_data resolver in
-            let trie = List.fold_left Blocklist.add_dns_entries trie blocklist in
+            let trie = List.fold_left (Blocklist.add_dns_entries source) trie blocklist in
             Resolver.update_primary_data resolver trie;
             Lwt.return_unit
           else
