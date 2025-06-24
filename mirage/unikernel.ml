@@ -40,8 +40,7 @@ module CA = struct
     X509.Signing_request.sign ~valid_from ~valid_until ~extensions ca_csr pk
       cacert_dn
     |> reword_error (msgf "%a" X509.Validation.pp_signature_error)
-    >>= fun certificate ->
-    Ok (certificate, pk)
+    >>= fun certificate -> Ok (certificate, pk)
 end
 
 module K = struct
@@ -88,8 +87,7 @@ module K = struct
 
   let dns_blocklist =
     let doc =
-      Arg.info
-        ~doc:"A web address to fetch DNS block lists from."
+      Arg.info ~doc:"A web address to fetch DNS block lists from."
         [ "dns-blocklist-url" ]
     in
     Mirage_runtime.register_arg Arg.(value & opt_all string [] doc)
@@ -319,10 +317,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module Resolver = Dns_resolver_mirage.Make (S)
   module Stub = Dns_stub_mirage.Make (S)
   module HTTP = Paf_mirage.Make (TCP)
-  module HE = Happy_eyeballs_mirage.Make(S)
-  module Dns_client = Dns_client_mirage.Make(S)(HE)
-  module Mimic_he = Mimic_happy_eyeballs.Make(S)(HE)(Dns_client)
-  module Http_client = Http_mirage_client.Make(TCP)(Mimic_he)
+  module HE = Happy_eyeballs_mirage.Make (S)
+  module Dns_client = Dns_client_mirage.Make (S) (HE)
+  module Mimic_he = Mimic_happy_eyeballs.Make (S) (HE) (Dns_client)
+  module Http_client = Http_mirage_client.Make (TCP) (Mimic_he)
 
   module Daemon = struct
     let pp_error ppf = function
@@ -362,7 +360,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 (* TODO handle multiple measurements with different tags? *)
                 match Metrics.SM.find_opt src map with
                 | None -> []
-                | Some datas -> List.concat_map (fun (_tag, data) -> Metrics.Data.fields data) datas)
+                | Some datas ->
+                    List.concat_map
+                      (fun (_tag, data) -> Metrics.Data.fields data)
+                      datas)
           in
           let find_measurement ?(default = -2) fields field_name =
             let field =
@@ -404,8 +405,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (live, free)
           in
           let domains_on_blocklist =
-            Blocklist.number_of_blocked_domains
-              (Resolver.primary_data resolver)
+            Blocklist.number_of_blocked_domains (Resolver.primary_data resolver)
           in
           let content =
             Statistics.statistics_page resolv_stats dns_cache_stats
@@ -417,30 +417,29 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Dashboard.dashboard_layout ~content:Query_logs.query_page (), None)
       | `GET, "/blocklist" ->
           let content =
-            Blocklist.block_page (Blocklist.blocked_domains (Resolver.primary_data resolver))
+            Blocklist.block_page
+              (Blocklist.blocked_domains (Resolver.primary_data resolver))
           in
-          Some
-            (Dashboard.dashboard_layout ~content (), None)
+          Some (Dashboard.dashboard_layout ~content (), None)
       | `POST, "/blocklist/add" ->
           (* TODO: we can't get the body here oh no *)
           None
-      | `POST, s when String.starts_with s ~prefix:"/blocklist/delete/" ->
-        (* NOTE: here we don't need the body because we embed in the path *)
-        let off = String.length "/blocklist/delete/" in
-        let domain = String.sub s off (String.length s - off) in
-        (match Domain_name.of_string domain with
-         | Error _ ->
-           None
-         | Ok domain ->
-           let trie = Resolver.primary_data resolver in
-           let trie = Dns_trie.remove_all domain trie in
-           Resolver.update_primary_data resolver trie;
-           (* FIXME: redirect to /blocklist *)
-           let content =
-             Blocklist.block_page (Blocklist.blocked_domains (Resolver.primary_data resolver))
-           in
-           Some
-             (Dashboard.dashboard_layout ~content (), None))
+      | `POST, s when String.starts_with s ~prefix:"/blocklist/delete/" -> (
+          (* NOTE: here we don't need the body because we embed in the path *)
+          let off = String.length "/blocklist/delete/" in
+          let domain = String.sub s off (String.length s - off) in
+          match Domain_name.of_string domain with
+          | Error _ -> None
+          | Ok domain ->
+              let trie = Resolver.primary_data resolver in
+              let trie = Dns_trie.remove_all domain trie in
+              Resolver.update_primary_data resolver trie;
+              (* FIXME: redirect to /blocklist *)
+              let content =
+                Blocklist.block_page
+                  (Blocklist.blocked_domains (Resolver.primary_data resolver))
+              in
+              Some (Dashboard.dashboard_layout ~content (), None))
       | _ -> None
 
     let request :
@@ -581,53 +580,54 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       let update_one serial source =
         let ingest resp acc data =
           if H2.Status.is_successful resp.Http_mirage_client.status then
-            let acc =
-              Angstrom.Buffered.feed acc
-                (`String data)
-            in
+            let acc = Angstrom.Buffered.feed acc (`String data) in
             Lwt.return acc
-          else
-            Lwt.return acc
+          else Lwt.return acc
         in
         let trie = Resolver.primary_data resolver in
         let trie = Blocklist.remove_old_serial trie source serial in
-        let parse_state = Angstrom.Buffered.parse (Blocklist_parser.lines source serial trie) in
-        Http_mirage_client.request http_client source ingest parse_state >>= function
+        let parse_state =
+          Angstrom.Buffered.parse (Blocklist_parser.lines source serial trie)
+        in
+        Http_mirage_client.request http_client source ingest parse_state
+        >>= function
         | Error e ->
-          Logs.warn (fun m -> m "Failed retrieving blocklist from %S: %a" source Mimic.pp_error e);
-          Lwt.return_unit
-        | Ok (resp, acc) ->
-          if H2.Status.is_successful resp.status then
-            let acc = Angstrom.Buffered.feed acc `Eof in
-            match Angstrom.Buffered.state_to_result acc with
-            | Error e ->
-              Logs.warn (fun m -> m "Error parsing blocklist from %S: %s"
-                            source e);
-              Lwt.return_unit
-            | Ok trie ->
-              Resolver.update_primary_data resolver trie;
-              Lwt.return_unit
-          else
-            let () =
-              Logs.warn (fun m -> m "Failed retrieving blocklist from %S: %a"
-                            source H2.Status.pp_hum resp.status)
-            in
+            Logs.warn (fun m ->
+                m "Failed retrieving blocklist from %S: %a" source
+                  Mimic.pp_error e);
             Lwt.return_unit
-
+        | Ok (resp, acc) ->
+            if H2.Status.is_successful resp.status then (
+              let acc = Angstrom.Buffered.feed acc `Eof in
+              match Angstrom.Buffered.state_to_result acc with
+              | Error e ->
+                  Logs.warn (fun m ->
+                      m "Error parsing blocklist from %S: %s" source e);
+                  Lwt.return_unit
+              | Ok trie ->
+                  Resolver.update_primary_data resolver trie;
+                  Lwt.return_unit)
+            else
+              let () =
+                Logs.warn (fun m ->
+                    m "Failed retrieving blocklist from %S: %a" source
+                      H2.Status.pp_hum resp.status)
+              in
+              Lwt.return_unit
       in
+
       let serial = ref 0l in
       let rec loop () =
         serial := Int32.succ !serial;
         Lwt_list.iter_s (update_one !serial) (K.dns_blocklist ()) >>= fun () ->
-        Mirage_sleep.ns (Duration.of_sec 10) >>= fun () ->
-        loop ()
+        Mirage_sleep.ns (Duration.of_sec 10) >>= fun () -> loop ()
       in
       loop ()
 
     let start_resolver stack tcp resolver http_client js_file =
       let fresh_tls () =
         let ca = CA.make (K.name ()) (K.ca_key ()) in
-        let (cert, pk) = Result.get_ok ca in
+        let cert, pk = Result.get_ok ca in
         let own_cert = `Single ([ cert ], pk) in
         let dns_tls =
           Tls.Config.server ~certificates:own_cert () |> Result.get_ok
@@ -652,21 +652,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt_switch.turn_off stop
         in
         Resolver.update_tls resolver dns_tls;
-        let h2 =
-          HTTP.alpn_service ~tls (handler resolver js_file)
-        in
+        let h2 = HTTP.alpn_service ~tls (handler resolver js_file) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         (* Due to the Lwt_switch [stop] [bell] will shut down the web server so
            we can safely wait for both. *)
-        Lwt.both (bell ()) th >>= fun _ ->
-        go (fresh_tls ()) resolver
+        Lwt.both (bell ()) th >>= fun _ -> go (fresh_tls ()) resolver
       in
-      let (cert, dns_tls, tls) = fresh_tls () in
+      let cert, dns_tls, tls = fresh_tls () in
       let resolver = Resolver.resolver stack ~root:true ~tls:dns_tls resolver in
       Lwt.async (fun () -> update_blocklist http_client resolver);
       go (cert, dns_tls, tls) resolver
-
   end
 
   let start net assets =
@@ -735,17 +731,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let getaddrinfo v4_or_v6 nam =
       match v4_or_v6 with
       | `A ->
-        Dns_client.getaddrinfo dns_client Dns.Rr_map.A nam >|=
-        Result.map (fun (_ttl, v4s) ->
-            Ipaddr.V4.Set.to_seq v4s
-            |> Seq.map (fun v4 -> Ipaddr.V4 v4)
-            |> Ipaddr.Set.of_seq)
+          Dns_client.getaddrinfo dns_client Dns.Rr_map.A nam
+          >|= Result.map (fun (_ttl, v4s) ->
+                  Ipaddr.V4.Set.to_seq v4s
+                  |> Seq.map (fun v4 -> Ipaddr.V4 v4)
+                  |> Ipaddr.Set.of_seq)
       | `AAAA ->
-        Dns_client.getaddrinfo dns_client Dns.Rr_map.Aaaa nam >|=
-        Result.map (fun (_ttl, v6s) ->
-            Ipaddr.V6.Set.to_seq v6s
-            |> Seq.map (fun v6 -> Ipaddr.V6 v6)
-            |> Ipaddr.Set.of_seq)
+          Dns_client.getaddrinfo dns_client Dns.Rr_map.Aaaa nam
+          >|= Result.map (fun (_ttl, v6s) ->
+                  Ipaddr.V6.Set.to_seq v6s
+                  |> Seq.map (fun v6 -> Ipaddr.V6 v6)
+                  |> Ipaddr.Set.of_seq)
     in
     HE.inject he getaddrinfo;
     let ctx = Mimic.add Mimic_he.happy_eyeballs he Mimic.empty in

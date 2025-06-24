@@ -1,8 +1,6 @@
 let statistics_page (clients, queries, blocked_requests, errors)
     (lru_weight, lru_capacity) mean_response_time (memory_live, memory_free)
-    (gc_live, gc_free)
-    domains_on_blocklist
-  =
+    (gc_live, gc_free) domains_on_blocklist =
   let elts =
     [
       ( "Total queries (" ^ string_of_int clients ^ " clients)",
