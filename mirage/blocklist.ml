@@ -53,15 +53,12 @@ let blocked_domains trie =
 
 let delete_button domain =
   Tyxml_html.(
-    form
-      ~a:[
-        Fmt.kstr a_action "/blocklist/delete/%a" Domain_name.pp domain;
-        a_method `Post;
-      ]
-      [
         button
           ~a:
             [
+              a_form "delete-form";
+              a_formmethod `Post;
+              Fmt.kstr a_formaction "/blocklist/delete/%a" Domain_name.pp domain;
               a_class
                 [
                   "bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-2 \
@@ -69,20 +66,20 @@ let delete_button domain =
                   "focus:outline-none focus:ring-2 focus:ring-red-400";
                 ];
             ]
-          [ txt "Delete" ]
-      ])
+          [ txt "Delete" ])
 
 let blocked_row (domain, soa) =
   Tyxml_html.(
-    li
-      ~a:[ a_class [ "flex justify-between items-center py-2 px-4" ] ]
-      [ txt (Domain_name.to_string ~trailing:true domain);
-        div [
-          match blocklist_source_of_soa soa with
+    tr
+      ~a:[ a_class [ "items-center py-2 px-4" ] ]
+      [
+        td [ txt (Domain_name.to_string ~trailing:true domain) ];
+        td [ match blocklist_source_of_soa soa with
           | None -> txt "Unknown"
           | Some source -> a ~a:[a_href source] [ txt source ]
-        ];
-        delete_button domain ])
+          ];
+        td [ delete_button domain ];
+      ])
 
 let block_page blocked_domains =
   Tyxml_html.(
@@ -149,16 +146,28 @@ let block_page blocked_domains =
                         [ "text-2xl font-semibold mt-8 mb-4 text-cyan-700" ];
                     ]
                   [ txt "Blocked domains" ];
-                ul
-                  ~a:
-                    [
-                      a_class
-                        [
-                          "bg-white shadow-md rounded divide-y divide-gray-200 \
-                           overflow-hidden";
-                        ];
-                    ]
-                  (List.map blocked_row blocked_domains);
+                form
+                  ~a:[a_id "delete-form"]
+                  [
+                    table
+                      ~a:[
+                        a_class
+                          [
+                            "bg-white shadow-md rounded divide-y divide-gray-200 \
+                             overflow-hidden w-full";
+                          ];
+                      ]
+                      ~thead:(thead
+                                [
+                                  tr
+                                    [
+                                      th [ txt "Blocked domain" ];
+                                      th [ txt "Block source" ];
+                                      th [ (* the delete button *) ];
+                                    ];
+                                ];)
+                      (List.map blocked_row blocked_domains);
+                  ];
               ];
-          ];
+          ]
       ])
