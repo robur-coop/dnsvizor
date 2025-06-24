@@ -34,13 +34,32 @@ let remove_old_serial trie source serial =
        else acc)
     trie
 
+module SM = Map.Make(String)
+
 let blocked_domains trie =
+  let incr lists s =
+    match SM.find_opt s lists with
+    | None -> SM.add s 0 lists
+    | Some n -> SM.add s (succ n) lists
+  in
   Dns_trie.fold Dns.Rr_map.Soa trie
-    (fun nam soa acc ->
+    (fun nam soa (manual, lists) ->
        if Domain_name.equal soa.nameserver blocked_nameserver then
-         (nam, soa) :: acc
+         match blocklist_source_of_soa soa with
+         | Some s ->
+           (manual, incr lists s)
+         | None ->
+           (nam :: manual, lists)
+       else (manual, lists))
+    ([], SM.empty)
+
+let number_of_blocked_domains trie =
+  Dns_trie.fold Dns.Rr_map.Soa trie
+    (fun _ soa acc ->
+       if Domain_name.equal soa.nameserver blocked_nameserver then
+         succ acc
        else acc)
-    []
+    0
 
 let delete_button domain =
   Tyxml_html.(
@@ -59,20 +78,16 @@ let delete_button domain =
             ]
           [ txt "Delete" ])
 
-let blocked_row (domain, soa) =
+let blocked_row domain =
   Tyxml_html.(
     tr
       ~a:[ a_class [ "items-center py-2 px-4" ] ]
       [
         td [ txt (Domain_name.to_string ~trailing:true domain) ];
-        td [ match blocklist_source_of_soa soa with
-          | None -> txt "Unknown"
-          | Some source -> a ~a:[a_href source] [ txt source ]
-          ];
         td [ delete_button domain ];
       ])
 
-let block_page blocked_domains =
+let block_page (manual_blocked_domains, lists) =
   Tyxml_html.(
     main
       ~a:[ a_class [ "w-full bg-gray-50 text-gray-900 min-h-screen" ] ]
@@ -153,12 +168,36 @@ let block_page blocked_domains =
                                   tr
                                     [
                                       th [ txt "Blocked domain" ];
-                                      th [ txt "Block source" ];
                                       th [ (* the delete button *) ];
                                     ];
                                 ];)
-                      (List.map blocked_row blocked_domains);
+                      (List.map blocked_row manual_blocked_domains);
                   ];
+                table
+                  ~a:[
+                    a_class
+                      [
+                        "bg-white shadow-md rounded divide-y divide-gray-200 \
+                         overflow-hidden w-full";
+                      ];
+                  ]
+                  ~thead:(thead
+                           [
+                             tr
+                               [
+                                 th [ txt "Block list" ];
+                                 th [ txt "Number of blocked domains" ];
+                               ]
+                           ])
+                  (
+                    SM.fold (fun list cnt acc ->
+                        tr [
+                          td [ a ~a:[ a_href list ] [txt list ]];
+                          td [ txt (string_of_int cnt)]
+                        ] :: acc
+                      )
+                      lists []
+                  );
               ];
           ]
       ])

@@ -404,9 +404,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (live, free)
           in
           let domains_on_blocklist =
-            Blocklist.blocked_domains
+            Blocklist.number_of_blocked_domains
               (Resolver.primary_data resolver)
-            |> List.length
           in
           let content =
             Statistics.statistics_page resolv_stats dns_cache_stats
