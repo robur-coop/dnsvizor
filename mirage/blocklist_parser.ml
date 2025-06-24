@@ -35,7 +35,7 @@ let a_ip =
   >>| (fun v4 -> Ipaddr.V4 v4)
   <|> (a_ipv6_coloned_hex >>| fun v6 -> Ipaddr.V6 v6)
 
-let hostname =
+let hostname source =
   let* str =
     take_till (function
         | '\x00' .. '\x1f' | ' ' | '#' -> true
@@ -46,7 +46,7 @@ let hostname =
   else
     match Result.bind (Domain_name.of_string str) Domain_name.host with
     | Error `Msg e ->
-      Log.warn (fun m -> m "Invalid domain name %s: %S" e str);
+      Log.warn (fun m -> m "%s: Invalid domain name %s: %S" source e str);
       return None
     | Ok hostname -> return (Some hostname)
 
@@ -59,24 +59,24 @@ let many1_opt p =
   lift2 opt_cons p
     (fix (fun m -> lift2 opt_cons p m <|> return []))
 
-let host =
+let host source =
   let* start_pos = pos in
   let* ip = a_ip in
   let* end_pos = pos in
-  let* hostnames = many1_opt (skippable_ws1 *> hostname) in
+  let* hostnames = many1_opt (skippable_ws1 *> hostname source) in
   let () =
     match ip with
     | Ipaddr.V4 v4 ->
       Log.info (fun m ->
           if Ipaddr.V4.(compare any) v4 <> 0 then
             (* TODO: we don't know the source /o\ *)
-            m "Non 0.0.0.0 ip address at byte offset %u-%u: %a"
-              start_pos end_pos Ipaddr.V4.pp v4)
+            m "%s: Non 0.0.0.0 ip address at byte offset %u-%u: %a"
+              source start_pos end_pos Ipaddr.V4.pp v4)
     | Ipaddr.V6 v6 ->
       Log.info (fun m ->
           if Ipaddr.V6.(compare unspecified) v6 <> 0 then
-            m "Non 0.0.0.0 ip address at byte offset %u-%u: %a"
-              start_pos end_pos Ipaddr.V6.pp v6)
+            m "%s: Non 0.0.0.0 ip address at byte offset %u-%u: %a"
+              source start_pos end_pos Ipaddr.V6.pp v6)
   in
   return hostnames
 
@@ -84,28 +84,34 @@ let comment =
   char '#' *>
   skip_while (function '\r' | '\n' -> false | _ -> true)
 
-let skip_garbage =
+let skip_garbage source =
   let* start_pos = pos in
   let* garbage = consumed (skip_while (function '\r' | '\n' -> false | _ -> true)) in
   let* end_pos = pos in
   if start_pos = end_pos then
     fail "no garbage to skip"
   else
-    (Log.warn (fun m -> m "Skipped garbage at byte offset %u-%u: %S" start_pos end_pos garbage);
+    (Log.warn (fun m -> m "%s: Skipped garbage at byte offset %u-%u: %S" source start_pos end_pos garbage);
      return ())
 
-let line =
+let empty_line =
+  peek_char >>= function
+  | None | Some ('\r' | '\n') -> return ()
+  | _ -> fail "not an empty line"
+
+let line source =
   skippable_ws *>
   let* pos = pos in
   choice ~failure_msg:"This shouldn't happen" [
-    (host <?> "host line");
+    empty_line *> return [];
+    (host source <?> "host line");
     (comment <?> "comment") *> return [];
-    (skip_garbage <?> "skip garbage") *> return []
+    (skip_garbage source <?> "skip garbage") *> return []
   ] <* skippable_ws <* (option () comment) <*
   (end_of_line <|> end_of_input)
 
 let many_concat p =
   fix (fun m -> lift2 List.append p m <|> return [])
 
-let lines =
-  many_concat (line <?> "line")
+let lines source =
+  many_concat (line source <?> "line" <* commit)

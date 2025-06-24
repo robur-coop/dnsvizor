@@ -590,7 +590,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           else
             Lwt.return acc
         in
-        let parse_state = Angstrom.Buffered.parse Blocklist_parser.lines in
+        let parse_state = Angstrom.Buffered.parse (Blocklist_parser.lines source) in
         Http_mirage_client.request http_client source ingest parse_state >>= function
         | Error e ->
           Logs.warn (fun m -> m "Failed retrieving blocklist from %S: %a" source Mimic.pp_error e);
