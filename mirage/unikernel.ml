@@ -591,6 +591,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Lwt.return acc
         in
         let trie = Resolver.primary_data resolver in
+        let trie = Blocklist.remove_old_serial trie source serial in
         let parse_state = Angstrom.Buffered.parse (Blocklist_parser.lines source serial trie) in
         Http_mirage_client.request http_client source ingest parse_state >>= function
         | Error e ->
@@ -605,7 +606,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                             source e);
               Lwt.return_unit
             | Ok trie ->
-              let trie = Blocklist.remove_old_serial trie source serial in
               Resolver.update_primary_data resolver trie;
               Lwt.return_unit
           else
