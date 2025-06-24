@@ -579,7 +579,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       }
 
     let update_blocklist http_client resolver : unit Lwt.t =
-      let update_one source =
+      let update_one serial source =
         let ingest resp acc data =
           if H2.Status.is_successful resp.Http_mirage_client.status then
             let acc =
@@ -590,7 +590,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           else
             Lwt.return acc
         in
-        let parse_state = Angstrom.Buffered.parse (Blocklist_parser.lines source) in
+        let trie = Resolver.primary_data resolver in
+        let parse_state = Angstrom.Buffered.parse (Blocklist_parser.lines source serial trie) in
         Http_mirage_client.request http_client source ingest parse_state >>= function
         | Error e ->
           Logs.warn (fun m -> m "Failed retrieving blocklist from %S: %a" source Mimic.pp_error e);
@@ -603,9 +604,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               Logs.warn (fun m -> m "Error parsing blocklist from %S: %s"
                             source e);
               Lwt.return_unit
-            | Ok blocklist ->
-              let trie = Resolver.primary_data resolver in
-              let trie = Blocklist.update_from_source trie source blocklist in
+            | Ok trie ->
+              let trie = Blocklist.remove_old_serial trie source serial in
               Resolver.update_primary_data resolver trie;
               Lwt.return_unit
           else
@@ -616,12 +616,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Lwt.return_unit
 
       in
-      let rec repeatedly_update_one source =
-        update_one source >>= fun () ->
+      let serial = ref 0l in
+      let rec loop () =
+        serial := Int32.succ !serial;
+        Lwt_list.iter_s (update_one !serial) (K.dns_blocklist ()) >>= fun () ->
         Mirage_sleep.ns (Duration.of_sec 10) >>= fun () ->
-        repeatedly_update_one source
+        loop ()
       in
-      Lwt_list.iter_p repeatedly_update_one (K.dns_blocklist ())
+      loop ()
 
     let start_resolver stack tcp resolver http_client js_file =
       let fresh_tls () =

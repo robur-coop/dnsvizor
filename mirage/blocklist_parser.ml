@@ -110,8 +110,16 @@ let line source =
   ] <* skippable_ws <* (option () comment) <*
   (end_of_line <|> end_of_input)
 
-let many_concat p =
-  fix (fun m -> lift2 List.append p m <|> return [])
-
-let lines source =
-  many_concat (line source <?> "line" <* commit)
+let lines source serial =
+  let soa = Blocklist.soa source serial in
+  let rec loop acc =
+    (end_of_input *> return acc) <|>
+    let* hosts = line source <?> "line" <* commit in
+    let acc =
+      List.fold_left (fun acc host ->
+          Dns_trie.insert host Dns.Rr_map.Soa soa acc)
+        acc hosts
+    in
+    loop acc
+  in
+  loop
