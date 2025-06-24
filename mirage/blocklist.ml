@@ -23,7 +23,6 @@ let add_dns_entries blocklist_source serial trie name =
   Dns_trie.insert name Dns.Rr_map.Soa (soa blocklist_source serial) trie
 
 let remove_old_serial trie source serial =
-  Logs.info (fun m -> m "Applying blocklist from %S" source);
   Dns_trie.fold Dns.Rr_map.Soa trie
     (fun nam soa acc ->
        if Domain_name.equal soa.nameserver blocked_nameserver &&

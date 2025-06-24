@@ -64,21 +64,22 @@ let host source =
   let* ip = a_ip in
   let* end_pos = pos in
   let* hostnames = many1_opt (skippable_ws1 *> hostname source) in
-  let () =
+  let invalid_ip =
     match ip with
     | Ipaddr.V4 v4 ->
-      Log.info (fun m ->
-          if Ipaddr.V4.(compare any) v4 <> 0 then
-            (* TODO: we don't know the source /o\ *)
-            m "%s: Non 0.0.0.0 ip address at byte offset %u-%u: %a"
-              source start_pos end_pos Ipaddr.V4.pp v4)
+      Ipaddr.V4.(compare any) v4 = 0
     | Ipaddr.V6 v6 ->
-      Log.info (fun m ->
-          if Ipaddr.V6.(compare unspecified) v6 <> 0 then
-            m "%s: Non 0.0.0.0 ip address at byte offset %u-%u: %a"
-              source start_pos end_pos Ipaddr.V6.pp v6)
+      Ipaddr.V6.(compare unspecified) v6 = 0
   in
-  return hostnames
+  if invalid_ip then
+    return hostnames
+  else
+    let () =
+      Log.debug (fun m ->
+            m "%s: Non 0.0.0.0 ip address at byte offset %u-%u: %a"
+              source start_pos end_pos Ipaddr.pp ip)
+    in
+    return []
 
 let comment =
   char '#' *>
