@@ -582,22 +582,32 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       let update_one source =
         let ingest resp acc data =
           if H2.Status.is_successful resp.Http_mirage_client.status then
-            Buffer.add_string acc data;
-          Lwt.return acc
+            let acc =
+              Angstrom.Buffered.feed acc
+                (`String data)
+            in
+            Lwt.return acc
+          else
+            Lwt.return acc
         in
-        Http_mirage_client.request http_client source ingest (Buffer.create 65536) >>= function
+        let parse_state = Angstrom.Buffered.parse Blocklist_parser.lines in
+        Http_mirage_client.request http_client source ingest parse_state >>= function
         | Error e ->
           Logs.warn (fun m -> m "Failed retrieving blocklist from %S: %a" source Mimic.pp_error e);
           Lwt.return_unit
         | Ok (resp, acc) ->
           if H2.Status.is_successful resp.status then
-            let blocklist = Buffer.contents acc in
-            Logs.info (fun m -> m "Retrieved data:@ %s" blocklist);
-            let blocklist = Blocklist.blocklist_of_string blocklist in
-            let trie = Resolver.primary_data resolver in
-            let trie = Blocklist.update_from_source trie source blocklist in
-            Resolver.update_primary_data resolver trie;
-            Lwt.return_unit
+            let acc = Angstrom.Buffered.feed acc `Eof in
+            match Angstrom.Buffered.state_to_result acc with
+            | Error e ->
+              Logs.warn (fun m -> m "Error parsing blocklist from %S: %s"
+                            source e);
+              Lwt.return_unit
+            | Ok blocklist ->
+              let trie = Resolver.primary_data resolver in
+              let trie = Blocklist.update_from_source trie source blocklist in
+              Resolver.update_primary_data resolver trie;
+              Lwt.return_unit
           else
             let () =
               Logs.warn (fun m -> m "Failed retrieving blocklist from %S: %a"

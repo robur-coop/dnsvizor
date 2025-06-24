@@ -30,6 +30,7 @@ let dnsvizor =
       package ~min:"4.5.0" ~sublibs:[ "network" ] "mirage-runtime";
       package "tyxml";
       package "http-mirage-client";
+      package "angstrom";
     ]
   in
   main ~packages "Unikernel.Main" (network @-> kv_ro @-> job)

@@ -51,35 +51,6 @@ let blocked_domains trie =
        else acc)
     []
 
-(* BEGIN mirage-hole code *)
-let is_ip_address str =
-  try ignore (Ipaddr.V4.of_string_exn str); true
-  with Ipaddr.Parse_error (_,_) -> false
-
-let parse_domain_file str =
-  let lines = String.split_on_char '\n' str in
-  let lines = List.filter (fun l -> l <> "" && not (String.starts_with ~prefix:"#" l)) lines in
-  List.filter_map (fun l -> match String.split_on_char ' ' l with
-      | [ ip; dom_name ] ->
-        if is_ip_address dom_name
-        then (Logs.warn (fun m -> m "ip address in hostname position: \"%s\"" l); None)
-        else
-          let () =
-            if not (String.equal "0.0.0.0" ip) then
-              Logs.warn (fun m -> m "non-0.0.0.0 ip in input file: %s" l);
-          in
-          (match Domain_name.of_string dom_name with
-          | Ok dom -> Some dom
-          | Error (`Msg e) ->
-            Logs.warn (fun m -> m "Bad domain %s: %s" dom_name e);
-            None)
-      | _ -> Logs.warn (fun m -> m "unexpected input line format: \"%s\"" l); None)
-    lines
-(* END mirage-hole code *)
-
-let blocklist_of_string s =
-  parse_domain_file s
-
 let delete_button domain =
   Tyxml_html.(
     form
