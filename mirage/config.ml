@@ -7,19 +7,23 @@ let assets = crunch "assets"
 
 let dnsvizor =
   let pin = "git+file://" ^ Filename.dirname (Sys.getcwd ()) ^ "#HEAD" in
+  let dns_pin = "git+https://github.com/mirage/ocaml-dns.git" in
   let packages =
     [
       package ~pin "dnsvizor";
       package "logs";
       package ~min:"0.5.0" "metrics";
       package "dns";
-      package "dns-client";
-      package "dns-mirage";
-      package ~min:"10.1.0" ~sublibs:[ "mirage" ] "dns-resolver";
-      package ~sublibs:[ "mirage" ] "dns-stub";
-      package "dns-tsig";
+      package ~pin:dns_pin "dns-client";
+      package ~pin:dns_pin "dns-client-mirage";
+      package ~pin:dns_pin "dnssec";
+      package ~pin:dns_pin "dns-mirage";
+      package ~pin:dns_pin ~min:"10.1.0" ~sublibs:[ "mirage" ] "dns-resolver";
+      package ~pin:dns_pin ~sublibs:[ "mirage" ] "dns-stub";
+      package ~pin:dns_pin "dns-tsig";
+      package ~pin:dns_pin "dns-server";
+      package ~pin:dns_pin "dns";
       package "paf" ~sublibs:[ "mirage"; "alpn" ];
-      package "dns-server";
       package ~min:"3.0.0" "ethernet";
       package ~min:"3.0.0" ~sublibs:[ "mirage" ] "arp";
       package ~min:"7.0.0"
@@ -29,6 +33,8 @@ let dnsvizor =
       package "charrua-server";
       package ~min:"4.5.0" ~sublibs:[ "network" ] "mirage-runtime";
       package "tyxml";
+      package "http-mirage-client";
+      package "angstrom";
     ]
   in
   main ~packages "Unikernel.Main" (network @-> kv_ro @-> job)
