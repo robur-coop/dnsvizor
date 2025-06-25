@@ -1,10 +1,36 @@
 let blocked_nameserver = Domain_name.of_string_exn "blocked"
 
+(* Tested with:
+   {[
+     let test =
+       QCheck.Test.make ~count:1000 ~name:"hostmaster_of_blocklist_source no exception"
+         QCheck.string
+         (fun s -> let _ = hostmaster_of_blocklist_source s in true)
+     in
+     QCheck.Test.check_exn test;;
+   ]} *)
 let hostmaster_of_blocklist_source source =
-  (* TODO: sanitize [blocklist_source]:
+  (* sanitize [blocklist_source]:
      - Two consecutive dots are disallowed,
-     - A trailing dot is "removed". *)
-  Domain_name.of_string_exn source
+     - labels are at most 63 bytes
+     - the whole string is at most 255 bytes*)
+  let labels = String.split_on_char '.' source in
+  let rev_labels, _ =
+    List.fold_left
+      (fun (acc, run_length) label ->
+        let len = min 63 (min (String.length label) (255 - succ run_length)) in
+        if len <= 0 then (acc, run_length)
+        else if String.length label > len then
+          (String.sub label 0 len :: acc, run_length + len + 1)
+        else (label :: acc, run_length + len + 1))
+      ([], 1) labels
+  in
+  let d = Domain_name.of_strings_exn (List.rev rev_labels) in
+  Logs.info (fun m ->
+      let d_str = Domain_name.to_string d in
+      if not (String.equal source d_str) then
+        m "Blocklist source %S is domain'ified to %S" source d_str);
+  d
 
 let soa blocklist_source serial =
   let hostmaster = hostmaster_of_blocklist_source blocklist_source in
