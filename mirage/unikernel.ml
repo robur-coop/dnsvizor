@@ -652,11 +652,18 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               to_retry
             >|= fun () -> `Done_retrying
       in
-      let rec loop sources to_retry =
+      let one_week () =
+        Mirage_sleep.ns (Duration.of_day 7) >|= fun () -> `Update
+      in
+      let rec loop sources to_retry timer =
         Lwt.pick
-          [ (Lwt_mvar.take mvar :> [> `Done_retrying ] Lwt.t); retry to_retry ]
+          [
+            (Lwt_mvar.take mvar :> [> `Done_retrying ] Lwt.t);
+            retry to_retry;
+            timer;
+          ]
         >>= function
-        | `Done_retrying -> loop sources []
+        | `Done_retrying -> loop sources [] timer
         | `Update ->
             serial := Int32.succ !serial;
             Lwt_list.map_s (update_one !serial) sources >>= fun status ->
@@ -668,9 +675,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   | _ -> None)
                 (List.combine sources status)
             in
-            loop sources to_retry
+            Lwt.cancel timer;
+            loop sources to_retry (one_week ())
       in
-      (mvar, loop (K.dns_blocklist ()) [])
+      (mvar, loop (K.dns_blocklist ()) [] (one_week ()))
 
     let start_resolver stack tcp resolver http_client js_file =
       let fresh_tls () =
