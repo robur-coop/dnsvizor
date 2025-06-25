@@ -345,7 +345,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
     let web_ui_handler resolver js_file req_method path =
       match (req_method, path) with
-      | `GET, "/main.js" -> Some (js_file, Some "text/javascript")
+      | `GET, "/main.js" -> Some (`Content (js_file, Some "text/javascript"))
       | `GET, "/" | `GET, "/dashboard" ->
           let map = Metrics.get_cache () in
           let lookup_src_by_name name =
@@ -411,16 +411,18 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Statistics.statistics_page resolv_stats dns_cache_stats
               resolver_timing memory_stats gc_stats domains_on_blocklist
           in
-          Some (Dashboard.dashboard_layout ~content (), None)
+          Some (`Content (Dashboard.dashboard_layout ~content (), None))
       | `GET, "/querylog" ->
           Some
-            (Dashboard.dashboard_layout ~content:Query_logs.query_page (), None)
+            (`Content
+              ( Dashboard.dashboard_layout ~content:Query_logs.query_page (),
+                None ))
       | `GET, "/blocklist" ->
           let content =
             Blocklist.block_page
               (Blocklist.blocked_domains (Resolver.primary_data resolver))
           in
-          Some (Dashboard.dashboard_layout ~content (), None)
+          Some (`Content (Dashboard.dashboard_layout ~content (), None))
       | `POST, "/blocklist/add" ->
           (* TODO: we can't get the body here oh no *)
           None
@@ -434,16 +436,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let trie = Resolver.primary_data resolver in
               let trie = Dns_trie.remove_all domain trie in
               Resolver.update_primary_data resolver trie;
-              (* FIXME: redirect to /blocklist *)
-              let content =
-                Blocklist.block_page
-                  (Blocklist.blocked_domains (Resolver.primary_data resolver))
-              in
-              Some (Dashboard.dashboard_layout ~content (), None))
+              Some (`Redirect ("/blocklist", None)))
+      | `POST, "/blocklist/update" ->
+          Some (`Redirect ("/blocklist", Some `Update))
       | _ -> None
 
     let request :
         type reqd headers request response ro wo.
+        _ ->
         _ ->
         HTTP.TLS.flow ->
         Ipaddr.t * int ->
@@ -451,7 +451,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         string ->
         unit =
-     fun resolver _flow (dst, port) reqd protocol js_file ->
+     fun resolver mvar _flow (dst, port) reqd protocol js_file ->
       match protocol with
       | Alpn.HTTP_1_1 (module Reqd) ->
           Lwt.async (fun () ->
@@ -478,7 +478,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 web_ui_handler resolver js_file request.H1.Request.meth
                   request.H1.Request.target
               with
-              | Some (content, content_type) -> reply ?content_type reqd content
+              | Some (`Content (content, content_type)) ->
+                  reply ?content_type reqd content
+              | Some (`Redirect (location, action)) -> (
+                  let headers = H1.Headers.of_list [ ("location", location) ] in
+                  let resp = H1.Response.create ~headers `See_other in
+                  Reqd.respond_with_string reqd resp "";
+                  match action with
+                  | None -> Lwt.return_unit
+                  | Some `Update ->
+                      if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
+                      else Lwt.return_unit)
               | None ->
                   let headers =
                     H1.Headers.of_list [ ("connection", "close") ]
@@ -510,7 +520,18 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             web_ui_handler resolver js_file request.H2.Request.meth
               request.H2.Request.target
           with
-          | Some (content, content_type) -> reply ?content_type reqd content
+          | Some (`Content (content, content_type)) ->
+              reply ?content_type reqd content
+          | Some (`Redirect (location, action)) -> (
+              let headers = H2.Headers.of_list [ ("location", location) ] in
+              let resp = H2.Response.create ~headers `See_other in
+              Reqd.respond_with_string reqd resp "";
+              match action with
+              | None -> ()
+              | Some `Update ->
+                  Lwt.async (fun () ->
+                      if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
+                      else Lwt.return_unit))
           | None -> (
               match (request.H2.Request.meth, request.H2.Request.target) with
               | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
@@ -568,15 +589,16 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   let resp = H2.Response.create ~headers `Bad_request in
                   Reqd.respond_with_string reqd resp ""))
 
-    let handler resolver js_file =
+    let handler resolver mvar js_file =
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request resolver flow dst reqd protocol js_file);
+            request resolver mvar flow dst reqd protocol js_file);
       }
 
-    let update_blocklist http_client resolver : unit Lwt.t =
+    let update_blocklist http_client resolver =
+      let serial = ref 0l in
       let update_one serial source =
         let ingest resp acc data =
           if H2.Status.is_successful resp.Http_mirage_client.status then
@@ -595,7 +617,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Logs.warn (fun m ->
                 m "Failed retrieving blocklist from %S: %a" source
                   Mimic.pp_error e);
-            Lwt.return_unit
+            Lwt.return `Network_error
         | Ok (resp, acc) ->
             if H2.Status.is_successful resp.status then (
               let acc = Angstrom.Buffered.feed acc `Eof in
@@ -603,26 +625,47 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               | Error e ->
                   Logs.warn (fun m ->
                       m "Error parsing blocklist from %S: %s" source e);
-                  Lwt.return_unit
+                  Lwt.return `Parsing_error
               | Ok trie ->
                   Resolver.update_primary_data resolver trie;
-                  Lwt.return_unit)
+                  Lwt.return `Success)
             else
               let () =
                 Logs.warn (fun m ->
                     m "Failed retrieving blocklist from %S: %a" source
                       H2.Status.pp_hum resp.status)
               in
-              Lwt.return_unit
+              Lwt.return `Http_error
       in
-
-      let serial = ref 0l in
-      let rec loop () =
-        serial := Int32.succ !serial;
-        Lwt_list.iter_s (update_one !serial) (K.dns_blocklist ()) >>= fun () ->
-        Mirage_sleep.ns (Duration.of_sec 10) >>= fun () -> loop ()
+      let mvar = Lwt_mvar.create `Update in
+      let retry = function
+        | [] -> fst (Lwt.wait ())
+        | _ :: _ as to_retry ->
+            Mirage_sleep.ns (Duration.of_sec 30) >>= fun () ->
+            Lwt_list.iter_s
+              (fun (serial, source) -> update_one serial source >|= ignore)
+              to_retry
+            >|= fun () -> `Done_retrying
       in
-      loop ()
+      let rec loop sources to_retry =
+        Lwt.pick
+          [ (Lwt_mvar.take mvar :> [> `Done_retrying ] Lwt.t); retry to_retry ]
+        >>= function
+        | `Done_retrying -> loop sources []
+        | `Update ->
+            serial := Int32.succ !serial;
+            Lwt_list.map_s (update_one !serial) sources >>= fun status ->
+            let to_retry =
+              List.filter_map
+                (function
+                  | source, `Network_error -> Some (!serial, source)
+                  | source, `Http_error -> Some (!serial, source)
+                  | _ -> None)
+                (List.combine (K.dns_blocklist ()) status)
+            in
+            loop sources to_retry
+      in
+      (mvar, loop (K.dns_blocklist ()) [])
 
     let start_resolver stack tcp resolver http_client js_file =
       let fresh_tls () =
@@ -639,7 +682,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         let tls = Result.get_ok tls in
         (cert, dns_tls, tls)
       in
-      let rec go (certificate, dns_tls, tls) resolver =
+      let rec go (certificate, dns_tls, tls) resolver mvar =
         let seven_days_before_expire =
           let _, expiring = X509.Certificate.validity certificate in
           let diff = Ptime.diff expiring (Mirage_ptime.now ()) in
@@ -652,17 +695,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt_switch.turn_off stop
         in
         Resolver.update_tls resolver dns_tls;
-        let h2 = HTTP.alpn_service ~tls (handler resolver js_file) in
+        let h2 = HTTP.alpn_service ~tls (handler resolver mvar js_file) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         (* Due to the Lwt_switch [stop] [bell] will shut down the web server so
            we can safely wait for both. *)
-        Lwt.both (bell ()) th >>= fun _ -> go (fresh_tls ()) resolver
+        Lwt.both (bell ()) th >>= fun _ -> go (fresh_tls ()) resolver mvar
       in
       let cert, dns_tls, tls = fresh_tls () in
       let resolver = Resolver.resolver stack ~root:true ~tls:dns_tls resolver in
-      Lwt.async (fun () -> update_blocklist http_client resolver);
-      go (cert, dns_tls, tls) resolver
+      let mvar, th = update_blocklist http_client resolver in
+      Lwt.join [ th; go (cert, dns_tls, tls) resolver mvar ]
   end
 
   let start net assets =

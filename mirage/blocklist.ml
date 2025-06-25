@@ -133,6 +133,8 @@ let block_page (manual_blocked_domains, lists) =
                     button
                       ~a:
                         [
+                          a_formaction "/blocklist/update";
+                          a_formmethod `Post;
                           a_class
                             [
                               "bg-cyan-100 hover:bg-cyan-200 text-cyan-700 \
