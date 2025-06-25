@@ -92,6 +92,11 @@ module K = struct
     in
     Mirage_runtime.register_arg Arg.(value & opt_all string [] doc)
 
+  let dns_block =
+    let doc = Arg.info ~doc:"A domain to block." [ "dns-block" ] in
+    let domain = Arg.conv (Domain_name.of_string, Domain_name.pp) in
+    Mirage_runtime.register_arg Arg.(value & opt_all domain [] doc)
+
   (* DNSmasq configuration options *)
   (* TODO support multiple dhcp-range statements *)
   let dhcp_range =
@@ -661,7 +666,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   | source, `Network_error -> Some (!serial, source)
                   | source, `Http_error -> Some (!serial, source)
                   | _ -> None)
-                (List.combine (K.dns_blocklist ()) status)
+                (List.combine sources status)
             in
             loop sources to_retry
       in
@@ -802,6 +807,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         let soa = Dns.Soa.create (K.name ()) in
         Dns_trie.insert (K.name ()) Dns.Rr_map.A ipv4_ttl Dns_trie.empty
         |> Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa
+      in
+      let trie =
+        List.fold_left Blocklist.add_manual_block trie (K.dns_block ())
       in
       Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate trie
     in
