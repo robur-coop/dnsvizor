@@ -18,8 +18,8 @@ let blocklist_source_of_soa soa : string option =
   then Some s
   else None
 
-let add_manual_block trie name =
-  Dns_trie.insert name Dns.Rr_map.Soa (soa "manual" 0l) trie
+let add_single_block source trie name =
+  Dns_trie.insert name Dns.Rr_map.Soa (soa source 0l) trie
 
 let remove_old_serial trie source serial =
   Dns_trie.fold Dns.Rr_map.Soa trie

@@ -809,7 +809,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         |> Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa
       in
       let trie =
-        List.fold_left Blocklist.add_manual_block trie (K.dns_block ())
+        List.fold_left
+          (Blocklist.add_single_block "boot-parameter")
+          trie (K.dns_block ())
       in
       Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate trie
     in
