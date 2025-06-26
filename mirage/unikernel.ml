@@ -428,35 +428,44 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               (Blocklist.blocked_domains (Resolver.primary_data resolver))
           in
           Some (`Content (Dashboard.dashboard_layout ~content (), None))
-      | `POST (content_type, data), "/blocklist/add" ->
+      | `POST (content_type, data), "/blocklist/add" -> (
           (* TODO: we can't get the body here oh no *)
-        let content_type =
-          Multipart_form.Content_type.of_string
-            (Option.fold content_type ~none:"application/x-www-form-urlencoded\r\n"
-               ~some:(fun s -> s ^ "\r\n"))
-        in
-        (match Result.bind content_type (Multipart_form.of_string_to_list data) with
-         | Error `Msg e ->
-           Logs.debug (fun m -> m "Bad multipart form: %s" e);
-           None
-         | Ok m ->
-           (* TODO: get "name" from [m] *)
-           if String.starts_with data ~prefix:"domain=" then
-             let domain = String.sub data (String.length "domain=") (String.length data - String.length "domain=") in
-             match Domain_name.of_string domain with
-             | Error `Msg e ->
-               Logs.debug (fun m -> m "client wanted to add a bad domain: %s" e);
-               Some (`Redirect ("/blocklist", None))
-             | Ok domain ->
-              let trie = Resolver.primary_data resolver in
-              let trie =
-                Dns_trie.insert domain Dns.Rr_map.Soa (Blocklist.soa "web-ui" 0l) trie
-              in
-              Resolver.update_primary_data resolver trie;
-              Some (`Redirect ("/blocklist", None))
-           else
-             (* FIXME: bad request I guess *)
-             Some (`Redirect ("/blocklist", None)))
+          let content_type =
+            Multipart_form.Content_type.of_string
+              (Option.fold content_type
+                 ~none:"application/x-www-form-urlencoded\r\n" ~some:(fun s ->
+                   s ^ "\r\n"))
+          in
+          match
+            Result.bind content_type (Multipart_form.of_string_to_list data)
+          with
+          | Error (`Msg e) ->
+              Logs.debug (fun m -> m "Bad multipart form: %s" e);
+              None
+          | Ok m ->
+              (* TODO: get "name" from [m] *)
+              if String.starts_with data ~prefix:"domain=" then (
+                let domain =
+                  String.sub data (String.length "domain=")
+                    (String.length data - String.length "domain=")
+                in
+                match Domain_name.of_string domain with
+                | Error (`Msg e) ->
+                    Logs.debug (fun m ->
+                        m "client wanted to add a bad domain: %s" e);
+                    Some (`Redirect ("/blocklist", None))
+                | Ok domain ->
+                    let trie = Resolver.primary_data resolver in
+                    let trie =
+                      Dns_trie.insert domain Dns.Rr_map.Soa
+                        (Blocklist.soa "web-ui" 0l)
+                        trie
+                    in
+                    Resolver.update_primary_data resolver trie;
+                    Some (`Redirect ("/blocklist", None)))
+              else
+                (* FIXME: bad request I guess *)
+                Some (`Redirect ("/blocklist", None)))
       | `POST _, s when String.starts_with s ~prefix:"/blocklist/delete/" -> (
           (* NOTE: here we don't need the body because we embed in the path *)
           let off = String.length "/blocklist/delete/" in
@@ -509,37 +518,41 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 match request.H1.Request.meth with
                 | `GET -> Lwt.return (Either.Left `GET)
                 | `POST ->
-                  (* TODO: reasonable max size *)
-                  let initial_size =
-                    Option.bind
-                      (H1.Headers.get request.headers "content-length")
-                      int_of_string_opt
-                    |> Option.value ~default:65536
-                  in
-                  let response_body = H1.Reqd.request_body reqd in
-                  let finished, notify_finished = Lwt.wait () in
-                  let wakeup v = Lwt.wakeup_later notify_finished v in
-                  let on_eof data () = wakeup (Buffer.contents data) in
-                  let rec on_read on_eof acc bs ~off ~len =
-                    let str = Bigstringaf.substring ~off ~len bs in
-                    let () = Buffer.add_string acc str in
+                    (* TODO: reasonable max size *)
+                    let initial_size =
+                      Option.bind
+                        (H1.Headers.get request.headers "content-length")
+                        int_of_string_opt
+                      |> Option.value ~default:65536
+                    in
+                    let response_body = H1.Reqd.request_body reqd in
+                    let finished, notify_finished = Lwt.wait () in
+                    let wakeup v = Lwt.wakeup_later notify_finished v in
+                    let on_eof data () = wakeup (Buffer.contents data) in
+                    let rec on_read on_eof acc bs ~off ~len =
+                      let str = Bigstringaf.substring ~off ~len bs in
+                      let () = Buffer.add_string acc str in
+                      H1.Body.Reader.schedule_read response_body
+                        ~on_read:(on_read on_eof acc) ~on_eof:(on_eof acc)
+                    in
+                    let f_init = Buffer.create initial_size in
                     H1.Body.Reader.schedule_read response_body
-                      ~on_read:(on_read on_eof acc) ~on_eof:(on_eof acc)
-                  in
-                  let f_init = Buffer.create initial_size in
-                  H1.Body.Reader.schedule_read response_body
-                    ~on_read:(on_read on_eof f_init) ~on_eof:(on_eof f_init);
-                  let content_type = H1.Headers.get request.headers "content-type" in
-                  finished >|= fun data ->
-                  Either.Left (`Post (content_type, data))
+                      ~on_read:(on_read on_eof f_init) ~on_eof:(on_eof f_init);
+                    let content_type =
+                      H1.Headers.get request.headers "content-type"
+                    in
+                    finished >|= fun data ->
+                    Either.Left (`Post (content_type, data))
                 | _ -> Lwt.return (Either.Right `Method_not_allowed)
               in
-              (r >|=
-               Either.map_left
-                 (fun meth -> web_ui_handler resolver js_file meth request.H1.Request.target, meth))
+              r
+              >|= Either.map_left (fun meth ->
+                      ( web_ui_handler resolver js_file meth
+                          request.H1.Request.target,
+                        meth ))
               >>= function
               | Left (Some (`Content (content, content_type)), _) ->
-                reply ?content_type reqd content
+                  reply ?content_type reqd content
               | Left (Some (`Redirect (location, action)), _) -> (
                   let headers = H1.Headers.of_list [ ("location", location) ] in
                   let resp = H1.Response.create ~headers `See_other in
@@ -547,25 +560,25 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   match action with
                   | None -> Lwt.return_unit
                   | Some `Update ->
-                    if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
-                    else Lwt.return_unit)
+                      if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
+                      else Lwt.return_unit)
               | Left (None, meth) ->
-                let headers =
-                  H1.Headers.of_list [ ("connection", "close") ]
-                in
-                let resp = H1.Response.create ~headers `Not_found in
-                Reqd.respond_with_string reqd resp "";
-                Lwt.return_unit
+                  let headers =
+                    H1.Headers.of_list [ ("connection", "close") ]
+                  in
+                  let resp = H1.Response.create ~headers `Not_found in
+                  Reqd.respond_with_string reqd resp "";
+                  Lwt.return_unit
               (* HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use
                  with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2 *)
               | Right status ->
-                let headers =
-                  H1.Headers.of_list [ ("connection", "close") ]
-                in
-                let resp = H1.Response.create ~headers status in
-                Reqd.respond_with_string reqd resp "";
-                Lwt.return_unit)
-      | Alpn.H2 (module Reqd) -> (
+                  let headers =
+                    H1.Headers.of_list [ ("connection", "close") ]
+                  in
+                  let resp = H1.Response.create ~headers status in
+                  Reqd.respond_with_string reqd resp "";
+                  Lwt.return_unit)
+      | Alpn.H2 (module Reqd) ->
           let reply ?(content_type = "text/html") reqd ?(headers = []) data =
             let headers =
               H2.Headers.of_list
@@ -587,38 +600,42 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             match request.H2.Request.meth with
             | `GET -> Lwt.return (Either.Left `GET)
             | `POST ->
-              (* TODO: reasonable max size *)
-              let initial_size =
-                Option.bind
-                  (H2.Headers.get request.headers "content-length")
-                  int_of_string_opt
-                |> Option.value ~default:65536
-              in
-              let response_body = H2.Reqd.request_body reqd in
-              let finished, notify_finished = Lwt.wait () in
-              let wakeup v = Lwt.wakeup_later notify_finished v in
-              let on_eof data () = wakeup (Buffer.contents data) in
-              let rec on_read on_eof acc bs ~off ~len =
-                let str = Bigstringaf.substring ~off ~len bs in
-                let () = Buffer.add_string acc str in
+                (* TODO: reasonable max size *)
+                let initial_size =
+                  Option.bind
+                    (H2.Headers.get request.headers "content-length")
+                    int_of_string_opt
+                  |> Option.value ~default:65536
+                in
+                let response_body = H2.Reqd.request_body reqd in
+                let finished, notify_finished = Lwt.wait () in
+                let wakeup v = Lwt.wakeup_later notify_finished v in
+                let on_eof data () = wakeup (Buffer.contents data) in
+                let rec on_read on_eof acc bs ~off ~len =
+                  let str = Bigstringaf.substring ~off ~len bs in
+                  let () = Buffer.add_string acc str in
+                  H2.Body.Reader.schedule_read response_body
+                    ~on_read:(on_read on_eof acc) ~on_eof:(on_eof acc)
+                in
+                let f_init = Buffer.create initial_size in
                 H2.Body.Reader.schedule_read response_body
-                  ~on_read:(on_read on_eof acc) ~on_eof:(on_eof acc)
-              in
-              let f_init = Buffer.create initial_size in
-              H2.Body.Reader.schedule_read response_body
-                ~on_read:(on_read on_eof f_init) ~on_eof:(on_eof f_init);
-              let content_type = H2.Headers.get request.headers "content-type" in
-              finished >|= fun data ->
-              Either.Left (`POST (content_type, data))
+                  ~on_read:(on_read on_eof f_init) ~on_eof:(on_eof f_init);
+                let content_type =
+                  H2.Headers.get request.headers "content-type"
+                in
+                finished >|= fun data ->
+                Either.Left (`POST (content_type, data))
             | _ -> Lwt.return (Either.Right `Method_not_allowed)
           in
           Lwt.async (fun () ->
-              r >|=
-              Either.map_left
-                (fun meth -> web_ui_handler resolver js_file meth request.H2.Request.target, meth)
+              r
+              >|= Either.map_left (fun meth ->
+                      ( web_ui_handler resolver js_file meth
+                          request.H2.Request.target,
+                        meth ))
               >|= function
               | Either.Left (Some (`Content (content, content_type)), _) ->
-                reply ?content_type reqd content
+                  reply ?content_type reqd content
               | Left (Some (`Redirect (location, action)), _) -> (
                   let headers = H2.Headers.of_list [ ("location", location) ] in
                   let resp = H2.Response.create ~headers `See_other in
@@ -626,49 +643,54 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   match action with
                   | None -> ()
                   | Some `Update ->
-                    Lwt.async (fun () ->
-                        if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
-                        else Lwt.return_unit))
+                      Lwt.async (fun () ->
+                          if Lwt_mvar.is_empty mvar then
+                            Lwt_mvar.put mvar `Update
+                          else Lwt.return_unit))
               | Left (None, meth) -> (
                   match (meth, request.H2.Request.target) with
-                  | `GET, path when String.starts_with ~prefix:"/dns-query" path ->
-                    let target = request.H2.Request.target in
-                    let elts = String.split_on_char '=' target in
-                    let elts = List.tl elts in
-                    let query = String.concat "=" elts in
-                    Logs.info (fun m -> m "%s" query);
-                    let query = Base64.decode_exn ~pad:false query in
-                    let resolve () =
-                      Resolver.resolve_external resolver (dst, port) query
-                      >>= fun (ttl, answer) ->
-                      reply ~content_type:"application/dns-message"
-                        ~headers:[ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
-                        reqd answer;
-                      Lwt.return_unit
-                    in
-                    Lwt.async resolve
-                  | `POST (_content_type, data), path when String.starts_with ~prefix:"/dns-query" path ->
-                    let resolve () =
-                      Resolver.resolve_external resolver (dst, port) data
-                      >>= fun (ttl, answer) ->
-                      reply ~content_type:"application/dns-message"
-                        ~headers:[ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
-                        reqd answer;
-                      Lwt.return_unit
-                    in
-                    Lwt.async resolve
+                  | `GET, path when String.starts_with ~prefix:"/dns-query" path
+                    ->
+                      let target = request.H2.Request.target in
+                      let elts = String.split_on_char '=' target in
+                      let elts = List.tl elts in
+                      let query = String.concat "=" elts in
+                      Logs.info (fun m -> m "%s" query);
+                      let query = Base64.decode_exn ~pad:false query in
+                      let resolve () =
+                        Resolver.resolve_external resolver (dst, port) query
+                        >>= fun (ttl, answer) ->
+                        reply ~content_type:"application/dns-message"
+                          ~headers:
+                            [ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
+                          reqd answer;
+                        Lwt.return_unit
+                      in
+                      Lwt.async resolve
+                  | `POST (_content_type, data), path
+                    when String.starts_with ~prefix:"/dns-query" path ->
+                      let resolve () =
+                        Resolver.resolve_external resolver (dst, port) data
+                        >>= fun (ttl, answer) ->
+                        reply ~content_type:"application/dns-message"
+                          ~headers:
+                            [ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
+                          reqd answer;
+                        Lwt.return_unit
+                      in
+                      Lwt.async resolve
                   | _ ->
-                    let headers =
-                      H2.Headers.of_list [ ("connection", "close") ]
-                    in
-                    let resp = H2.Response.create ~headers `Not_found in
-                    Reqd.respond_with_string reqd resp "")
+                      let headers =
+                        H2.Headers.of_list [ ("connection", "close") ]
+                      in
+                      let resp = H2.Response.create ~headers `Not_found in
+                      Reqd.respond_with_string reqd resp "")
               | Either.Right status ->
-                let headers =
-                  H2.Headers.of_list [ ("connection", "close") ]
-                in
-                let resp = H2.Response.create ~headers status in
-                Reqd.respond_with_string reqd resp ""))
+                  let headers =
+                    H2.Headers.of_list [ ("connection", "close") ]
+                  in
+                  let resp = H2.Response.create ~headers status in
+                  Reqd.respond_with_string reqd resp "")
 
     let handler resolver mvar js_file =
       {
