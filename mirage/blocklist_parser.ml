@@ -29,6 +29,8 @@ let a_ip =
   >>| (fun v4 -> Ipaddr.V4 v4)
   <|> (a_ipv6_coloned_hex >>| fun v6 -> Ipaddr.V6 v6)
 
+let localhost = Domain_name.of_string_exn "localhost"
+
 let hostname source =
   let* str =
     take_till (function '\x00' .. '\x1f' | ' ' | '#' -> true | _ -> false)
@@ -39,7 +41,11 @@ let hostname source =
     | Error (`Msg e) ->
         Log.warn (fun m -> m "%s: Invalid domain name %s: %S" source e str);
         return None
-    | Ok hostname -> return (Some hostname)
+    | Ok hostname ->
+        (* See https://datatracker.ietf.org/doc/html/draft-ietf-dnsop-let-localhost-be-localhost *)
+        if Domain_name.is_subdomain ~subdomain:hostname ~domain:localhost then
+          return None
+        else return (Some hostname)
 
 let opt_cons x xs = match x with None -> xs | Some x -> x :: xs
 let sep_by1_opt s p = fix (fun m -> lift2 opt_cons p (s *> m <|> return []))
