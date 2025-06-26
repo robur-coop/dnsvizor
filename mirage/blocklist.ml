@@ -135,6 +135,7 @@ let block_page (manual_blocked_domains, lists) =
                       ~a:
                         [
                           a_input_type `Text;
+                          a_name "domain";
                           a_placeholder
                             "Add a domain (example.com or sub.example.com)";
                           a_class
