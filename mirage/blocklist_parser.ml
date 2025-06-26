@@ -42,14 +42,11 @@ let hostname source =
     | Ok hostname -> return (Some hostname)
 
 let opt_cons x xs = match x with None -> xs | Some x -> x :: xs
-
-let sep_by1_opt s p =
-  fix (fun m ->
-      lift2 opt_cons p ((s *> m <|> return [])))
+let sep_by1_opt s p = fix (fun m -> lift2 opt_cons p (s *> m <|> return []))
 
 let host source =
-  option () (a_ip *> skippable_ws1) *>
-  sep_by1_opt skippable_ws1 (hostname source)
+  option () (a_ip *> skippable_ws1)
+  *> sep_by1_opt skippable_ws1 (hostname source)
 
 let comment =
   char '#' *> skip_while (function '\r' | '\n' -> false | _ -> true)
