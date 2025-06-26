@@ -47,23 +47,8 @@ let many1_opt p =
   lift2 opt_cons p (fix (fun m -> lift2 opt_cons p m <|> return []))
 
 let host source =
-  let* start_pos = pos in
   let* ip = a_ip in
-  let* end_pos = pos in
-  let* hostnames = many1_opt (skippable_ws1 *> hostname source) in
-  let invalid_ip =
-    match ip with
-    | Ipaddr.V4 v4 -> Ipaddr.V4.(compare any) v4 = 0
-    | Ipaddr.V6 v6 -> Ipaddr.V6.(compare unspecified) v6 = 0
-  in
-  if invalid_ip then return hostnames
-  else
-    let () =
-      Log.debug (fun m ->
-          m "%s: Non 0.0.0.0 ip address at byte offset %u-%u: %a" source
-            start_pos end_pos Ipaddr.pp ip)
-    in
-    return []
+  many1_opt (skippable_ws1 *> hostname source)
 
 let comment =
   char '#' *> skip_while (function '\r' | '\n' -> false | _ -> true)
