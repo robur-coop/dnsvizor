@@ -29,6 +29,8 @@ let a_ip =
   >>| (fun v4 -> Ipaddr.V4 v4)
   <|> (a_ipv6_coloned_hex >>| fun v6 -> Ipaddr.V6 v6)
 
+let localhost = Domain_name.of_string_exn "localhost"
+
 let hostname source =
   let* str =
     take_till (function '\x00' .. '\x1f' | ' ' | '#' -> true | _ -> false)
@@ -39,31 +41,18 @@ let hostname source =
     | Error (`Msg e) ->
         Log.warn (fun m -> m "%s: Invalid domain name %s: %S" source e str);
         return None
-    | Ok hostname -> return (Some hostname)
+    | Ok hostname ->
+        (* See https://datatracker.ietf.org/doc/html/draft-ietf-dnsop-let-localhost-be-localhost *)
+        if Domain_name.is_subdomain ~subdomain:hostname ~domain:localhost then
+          return None
+        else return (Some hostname)
 
 let opt_cons x xs = match x with None -> xs | Some x -> x :: xs
-
-let many1_opt p =
-  lift2 opt_cons p (fix (fun m -> lift2 opt_cons p m <|> return []))
+let sep_by1_opt s p = fix (fun m -> lift2 opt_cons p (s *> m <|> return []))
 
 let host source =
-  let* start_pos = pos in
-  let* ip = a_ip in
-  let* end_pos = pos in
-  let* hostnames = many1_opt (skippable_ws1 *> hostname source) in
-  let invalid_ip =
-    match ip with
-    | Ipaddr.V4 v4 -> Ipaddr.V4.(compare any) v4 = 0
-    | Ipaddr.V6 v6 -> Ipaddr.V6.(compare unspecified) v6 = 0
-  in
-  if invalid_ip then return hostnames
-  else
-    let () =
-      Log.debug (fun m ->
-          m "%s: Non 0.0.0.0 ip address at byte offset %u-%u: %a" source
-            start_pos end_pos Ipaddr.pp ip)
-    in
-    return []
+  option () (a_ip *> skippable_ws1)
+  *> sep_by1_opt skippable_ws1 (hostname source)
 
 let comment =
   char '#' *> skip_while (function '\r' | '\n' -> false | _ -> true)
