@@ -240,6 +240,16 @@ module K = struct
       required & opt (some domain_name) None & info [ "name" ] ~doc
     in
     Mirage_runtime.register_arg arg
+
+  let no_hosts =
+    let doc =
+      Arg.info
+        ~doc:
+          "Don't 'read' the (synthesized) /etc/hosts (contains only --name \
+           argument)"
+        [ "no-hosts" ]
+    in
+    Mirage_runtime.register_arg Arg.(value & flag doc)
 end
 
 module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
@@ -1112,12 +1122,15 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let primary_t =
       (* setup DNS server state: *)
       let trie =
-        let ipv4_ttl =
-          (3600l, Ipaddr.V4.Set.singleton (Ipaddr.V4.Prefix.address (K.ipv4 ())))
-        in
-        let soa = Dns.Soa.create (K.name ()) in
-        Dns_trie.insert (K.name ()) Dns.Rr_map.A ipv4_ttl Dns_trie.empty
-        |> Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa
+        if K.no_hosts () then Dns_trie.empty
+        else
+          let ipv4_ttl =
+            ( 3600l,
+              Ipaddr.V4.Set.singleton (Ipaddr.V4.Prefix.address (K.ipv4 ())) )
+          in
+          let soa = Dns.Soa.create (K.name ()) in
+          Dns_trie.insert (K.name ()) Dns.Rr_map.A ipv4_ttl Dns_trie.empty
+          |> Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa
       in
       let trie =
         List.fold_left
