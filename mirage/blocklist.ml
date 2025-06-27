@@ -88,6 +88,7 @@ let delete_button domain =
     button
       ~a:
         [
+          Fmt.kstr a_title "Delete block for %a." Domain_name.pp domain;
           a_form "delete-form";
           a_formmethod `Post;
           Fmt.kstr a_formaction "/blocklist/delete/%a" Domain_name.pp domain;
@@ -159,6 +160,8 @@ let block_page (manual_blocked_domains, lists) =
                     button
                       ~a:
                         [
+                          a_title
+                            "Refresh remote block lists. This may take a while.";
                           a_formaction "/blocklist/update";
                           a_formmethod `Post;
                           a_class
