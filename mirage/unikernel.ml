@@ -1124,12 +1124,24 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       let trie =
         if K.no_hosts () then Dns_trie.empty
         else
-          let ipv4_ttl =
-            ( 3600l,
-              Ipaddr.V4.Set.singleton (Ipaddr.V4.Prefix.address (K.ipv4 ())) )
+          let ips = S.IP.configured_ips ip in
+          let ipv4s, ipv6s =
+            List.fold_left
+              (fun (ipv4s, ipv6s) ip ->
+                match ip with
+                | Ipaddr.V4 v4 ->
+                    let v4 = Ipaddr.V4.Prefix.address v4 in
+                    (Ipaddr.V4.Set.add v4 ipv4s, ipv6s)
+                | Ipaddr.V6 v6 ->
+                    let v6 = Ipaddr.V6.Prefix.address v6 in
+                    (ipv4s, Ipaddr.V6.Set.add v6 ipv6s))
+              (Ipaddr.V4.Set.empty, Ipaddr.V6.Set.empty)
+              ips
           in
+          let a_record = (3600l, ipv4s) and quad_a_record = (3600l, ipv6s) in
           let soa = Dns.Soa.create (K.name ()) in
-          Dns_trie.insert (K.name ()) Dns.Rr_map.A ipv4_ttl Dns_trie.empty
+          Dns_trie.insert (K.name ()) Dns.Rr_map.A a_record Dns_trie.empty
+          |> Dns_trie.insert (K.name ()) Dns.Rr_map.Aaaa quad_a_record
           |> Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa
       in
       let trie =
