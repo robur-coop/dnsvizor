@@ -326,6 +326,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module Dns_client = Dns_client_mirage.Make (S) (HE)
   module Mimic_he = Mimic_happy_eyeballs.Make (S) (HE) (Dns_client)
   module Http_client = Http_mirage_client.Make (TCP) (Mimic_he)
+  module Map = Map.Make (String)
 
   module Daemon = struct
     let pp_error ppf = function
@@ -428,44 +429,69 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               (Blocklist.blocked_domains (Resolver.primary_data resolver))
           in
           Some (`Content (Dashboard.dashboard_layout ~content (), None))
-      | `POST (content_type, data), "/blocklist/add" -> (
-          (* TODO: we can't get the body here oh no *)
-          let content_type =
-            Multipart_form.Content_type.of_string
-              (Option.fold content_type
-                 ~none:"application/x-www-form-urlencoded\r\n" ~some:(fun s ->
-                   s ^ "\r\n"))
+      | `POST (content_type_header, data), "/blocklist/add" -> (
+          let to_map ~assoc m =
+            let open Multipart_form in
+            let rec go (map, rest) = function
+              | Leaf { header; body } -> (
+                  let filename =
+                    Option.bind
+                      (Header.content_disposition header)
+                      Content_disposition.filename
+                  in
+                  match
+                    Option.bind
+                      (Header.content_disposition header)
+                      Content_disposition.name
+                  with
+                  | Some name ->
+                      (Map.add name (filename, List.assoc body assoc) map, rest)
+                  | None ->
+                      (map, (body, (filename, List.assoc body assoc)) :: rest))
+              | Multipart { body; _ } ->
+                  let fold acc = function
+                    | Some elt -> go acc elt
+                    | None -> acc
+                  in
+                  List.fold_left fold (map, rest) body
+            in
+            go (Map.empty, []) m
           in
-          match
-            Result.bind content_type (Multipart_form.of_string_to_list data)
-          with
+          let content_type =
+            Option.fold ~none:"application/x-www-form-urlencoded\r\n"
+              ~some:(fun s -> s ^ "\r\n")
+              content_type_header
+          in
+          match Multipart_form.Content_type.of_string content_type with
           | Error (`Msg e) ->
-              Logs.debug (fun m -> m "Bad multipart form: %s" e);
-              None
-          | Ok m ->
-              (* TODO: get "name" from [m] *)
-              if String.starts_with data ~prefix:"domain=" then (
-                let domain =
-                  String.sub data (String.length "domain=")
-                    (String.length data - String.length "domain=")
-                in
-                match Domain_name.of_string domain with
-                | Error (`Msg e) ->
-                    Logs.debug (fun m ->
-                        m "client wanted to add a bad domain: %s" e);
-                    Some (`Redirect ("/blocklist", None))
-                | Ok domain ->
-                    let trie = Resolver.primary_data resolver in
-                    let trie =
-                      Dns_trie.insert domain Dns.Rr_map.Soa
-                        (Blocklist.soa "web-ui" 0l)
-                        trie
-                    in
-                    Resolver.update_primary_data resolver trie;
-                    Some (`Redirect ("/blocklist", None)))
-              else
-                (* FIXME: bad request I guess *)
-                Some (`Redirect ("/blocklist", None)))
+              Logs.err (fun m -> m "Bad content-type header: %s" e);
+              Some (`Redirect ("/blocklist", None))
+          | Ok ct -> (
+              match Multipart_form.of_string_to_list data ct with
+              | Error (`Msg e) ->
+                  Logs.err (fun m -> m "Error parsing form: %s" e);
+                  Some (`Redirect ("/blocklist", None))
+              | Ok (m, assoc) -> (
+                  let multipart_body, _r = to_map ~assoc m in
+                  match Map.find_opt "domain" multipart_body with
+                  | None ->
+                      Logs.err (fun m -> m "No domain field in form");
+                      Some (`Redirect ("/blocklist", None))
+                  | Some (_, domain_str) -> (
+                      match Domain_name.of_string domain_str with
+                      | Error (`Msg e) ->
+                          Logs.debug (fun m ->
+                              m "client wanted to add a bad domain: %s" e);
+                          Some (`Redirect ("/blocklist", None))
+                      | Ok domain ->
+                          let trie = Resolver.primary_data resolver in
+                          let trie =
+                            Dns_trie.insert domain Dns.Rr_map.Soa
+                              (Blocklist.soa "web-ui" 0l)
+                              trie
+                          in
+                          Resolver.update_primary_data resolver trie;
+                          Some (`Redirect ("/blocklist", None))))))
       | `POST _, s when String.starts_with s ~prefix:"/blocklist/delete/" -> (
           (* NOTE: here we don't need the body because we embed in the path *)
           let off = String.length "/blocklist/delete/" in
@@ -562,7 +588,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   | Some `Update ->
                       if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
                       else Lwt.return_unit)
-              | Left (None, meth) ->
+              | Left (None, _meth) ->
                   let headers =
                     H1.Headers.of_list [ ("connection", "close") ]
                   in
