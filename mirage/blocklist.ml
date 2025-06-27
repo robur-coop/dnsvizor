@@ -94,7 +94,7 @@ let delete_button domain =
           a_class
             [
               "bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-2 \
-               rounded transition duration-200";
+               rounded transition duration-200 cursor-pointer";
               "focus:outline-none focus:ring-2 focus:ring-red-400";
             ];
         ]
@@ -153,7 +153,7 @@ let block_page (manual_blocked_domains, lists) =
                             [
                               "bg-cyan-500 hover:bg-cyan-600 text-white \
                                font-semibold px-4 py-2 rounded transition \
-                               duration-200";
+                               duration-200 cursor-pointer";
                             ];
                         ]
                       [ txt "Add" ];
@@ -166,7 +166,8 @@ let block_page (manual_blocked_domains, lists) =
                             [
                               "bg-cyan-100 hover:bg-cyan-200 text-cyan-700 \
                                font-semibold px-4 py-2 rounded transition \
-                               duration-200 border border-cyan-300";
+                               duration-200 border border-cyan-300 \
+                               cursor-pointer";
                             ];
                         ]
                       [ txt "⟳" ];
