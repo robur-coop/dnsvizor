@@ -821,7 +821,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           (Blocklist.add_single_block "boot-parameter")
           trie (K.dns_block ())
       in
-      Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate trie
+      Dns_server.Primary.create ~trie_cache_entries:0
+        ~rng:Mirage_crypto_rng.generate trie
     in
     (match K.dns_upstream () with
     | None ->
