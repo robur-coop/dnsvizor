@@ -128,6 +128,7 @@ let block_page (manual_blocked_domains, lists) =
                     [
                       a_action "/blocklist/add";
                       a_method `Post;
+                      a_enctype "multipart/form-data";
                       a_class [ "flex mb-4 gap-2" ];
                     ]
                   [
@@ -178,7 +179,12 @@ let block_page (manual_blocked_domains, lists) =
                       a_class
                         [ "text-2xl font-semibold mt-8 mb-4 text-cyan-700" ];
                     ]
-                  [ txt "Blocked domains" ];
+                  [
+                    txt
+                      ("Blocked domains ("
+                      ^ string_of_int (List.length manual_blocked_domains)
+                      ^ ")");
+                  ];
                 form
                   ~a:[ a_id "delete-form" ]
                   [
@@ -187,48 +193,112 @@ let block_page (manual_blocked_domains, lists) =
                         [
                           a_class
                             [
-                              "bg-white shadow-md rounded divide-y \
-                               divide-gray-200 overflow-hidden w-full";
+                              "min-w-full divide-y divide-gray-200 bg-white \
+                               shadow-md rounded-lg overflow-hidden";
                             ];
                         ]
                       ~thead:
                         (thead
+                           ~a:[ a_class [ "bg-gray-50" ] ]
                            [
                              tr
                                [
-                                 th [ txt "Blocked domain" ];
-                                 th [ (* the delete button *) ];
+                                 th
+                                   ~a:
+                                     [
+                                       a_class
+                                         [
+                                           "px-6 py-3 text-left text-xs \
+                                            font-semibold text-gray-700 \
+                                            uppercase tracking-wider";
+                                         ];
+                                     ]
+                                   [ txt "Blocked domain" ];
+                                 th
+                                   ~a:
+                                     [
+                                       a_class
+                                         [
+                                           "px-6 py-3 text-left text-xs \
+                                            font-semibold text-gray-700 \
+                                            uppercase tracking-wider";
+                                         ];
+                                     ]
+                                   [ txt "Count" ];
+                                 th
+                                   ~a:
+                                     [
+                                       a_class
+                                         [
+                                           "px-6 py-3 text-left text-xs \
+                                            font-semibold text-gray-700 \
+                                            uppercase tracking-wider";
+                                         ];
+                                     ]
+                                   [ txt "Actions" ];
                                ];
                            ])
-                      (List.map blocked_row manual_blocked_domains);
+                      (List.map
+                         (fun domain ->
+                           tr
+                             ~a:
+                               [
+                                 a_class
+                                   [
+                                     "hover:bg-gray-50 transition-colors \
+                                      duration-100";
+                                   ];
+                               ]
+                             [
+                               td
+                                 ~a:
+                                   [
+                                     a_class
+                                       [
+                                         "px-6 py-4 whitespace-nowrap text-sm \
+                                          font-medium text-gray-900";
+                                       ];
+                                   ]
+                                 [
+                                   txt
+                                     (Domain_name.to_string ~trailing:true
+                                        domain);
+                                 ];
+                               td [];
+                               td
+                                 ~a:[ a_class [ "px-6 py-4" ] ]
+                                 [ delete_button domain ];
+                             ])
+                         manual_blocked_domains
+                      @ SM.fold
+                          (fun list cnt acc ->
+                            tr
+                              [
+                                td
+                                  ~a:
+                                    [
+                                      a_class
+                                        [
+                                          "hover:bg-gray-50 transition-colors \
+                                           duration-100";
+                                        ];
+                                    ]
+                                  [ a ~a:[ a_href list ] [ txt list ] ];
+                                td
+                                  ~a:
+                                    [
+                                      a_class
+                                        [
+                                          "hover:bg-gray-50 transition-colors \
+                                           duration-100";
+                                        ];
+                                    ]
+                                  [ txt (string_of_int cnt) ];
+                                td [];
+                              ]
+                            :: acc)
+                          lists []);
                   ];
-                table
-                  ~a:
-                    [
-                      a_class
-                        [
-                          "bg-white shadow-md rounded divide-y divide-gray-200 \
-                           overflow-hidden w-full";
-                        ];
-                    ]
-                  ~thead:
-                    (thead
-                       [
-                         tr
-                           [
-                             th [ txt "Block list" ];
-                             th [ txt "Number of blocked domains" ];
-                           ];
-                       ])
-                  (SM.fold
-                     (fun list cnt acc ->
-                       tr
-                         [
-                           td [ a ~a:[ a_href list ] [ txt list ] ];
-                           td [ txt (string_of_int cnt) ];
-                         ]
-                       :: acc)
-                     lists []);
               ];
           ];
       ])
