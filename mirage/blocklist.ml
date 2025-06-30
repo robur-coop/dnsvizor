@@ -95,7 +95,7 @@ let delete_button domain =
           a_class
             [
               "bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-2 \
-               rounded transition duration-200";
+               rounded transition duration-200 cursor-pointer";
               "focus:outline-none focus:ring-2 focus:ring-red-400";
             ];
         ]
@@ -136,6 +136,7 @@ let block_page (manual_blocked_domains, lists) =
                       ~a:
                         [
                           a_input_type `Text;
+                          a_name "domain";
                           a_placeholder
                             "Add a domain (example.com or sub.example.com)";
                           a_class
@@ -153,7 +154,7 @@ let block_page (manual_blocked_domains, lists) =
                             [
                               "bg-cyan-500 hover:bg-cyan-600 text-white \
                                font-semibold px-4 py-2 rounded transition \
-                               duration-200";
+                               duration-200 cursor-pointer";
                             ];
                         ]
                       [ txt "Add" ];
@@ -168,7 +169,8 @@ let block_page (manual_blocked_domains, lists) =
                             [
                               "bg-cyan-100 hover:bg-cyan-200 text-cyan-700 \
                                font-semibold px-4 py-2 rounded transition \
-                               duration-200 border border-cyan-300";
+                               duration-200 border border-cyan-300 \
+                               cursor-pointer";
                             ];
                         ]
                       [ txt "⟳" ];
@@ -179,7 +181,12 @@ let block_page (manual_blocked_domains, lists) =
                       a_class
                         [ "text-2xl font-semibold mt-8 mb-4 text-cyan-700" ];
                     ]
-                  [ txt "Blocked domains" ];
+                  [
+                    txt
+                      ("Blocked domains ("
+                      ^ string_of_int (List.length manual_blocked_domains)
+                      ^ ")");
+                  ];
                 form
                   ~a:[ a_id "delete-form" ]
                   [

@@ -35,6 +35,7 @@ let dnsvizor =
       package "tyxml";
       package "http-mirage-client";
       package "angstrom";
+      package "multipart_form";
     ]
   in
   main ~packages "Unikernel.Main" (network @-> kv_ro @-> job)
