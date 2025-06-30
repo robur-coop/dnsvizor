@@ -1,4 +1,5 @@
 open Lwt.Infix
+open Dnsvizor.Config_parser
 
 module CA = struct
   let prefix =
@@ -454,6 +455,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               (Blocklist.blocked_domains (Resolver.primary_data resolver))
           in
           Some (`Content (Dashboard.dashboard_layout ~content (), None))
+      | `GET, "/configuration" ->
+          Some
+            (`Content
+              ( Dashboard.dashboard_layout
+                  ~content:Configuration.configuration_page (),
+                None ))
       | `POST (content_type_header, data), "/blocklist/add" -> (
           let content_type =
             Option.fold ~none:"application/x-www-form-urlencoded\r\n"
@@ -490,6 +497,40 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                           in
                           Resolver.update_primary_data resolver trie;
                           Some (`Redirect ("/blocklist", None))))))
+      | `POST (content_type_header, data), "/configuration/upload" -> (
+          let content_type =
+            Option.fold ~none:"multipart/form-data\r\n"
+              ~some:(fun s -> s ^ "\r\n")
+              content_type_header
+          in
+          match Multipart_form.Content_type.of_string content_type with
+          | Error (`Msg e) ->
+              (* FIXME: bad request I guess *)
+              Logs.err (fun m -> m "Bad content-type header: %s" e);
+              Some (`Redirect ("/configuraton", None))
+          | Ok ct -> (
+              match Multipart_form.of_string_to_list data ct with
+              | Error (`Msg e) ->
+                  Logs.err (fun m -> m "Error parsing form: %s" e);
+                  Some (`Redirect ("/configuration", None))
+              | Ok (m, assoc) -> (
+                  let multipart_body, _r = to_map ~assoc m in
+                  match Map.find_opt "dnsmasq_config_file" multipart_body with
+                  | None ->
+                      Logs.err (fun m -> m "No dnsmasq config file uploaded");
+                      Some (`Redirect ("/configuration", None))
+                  | Some (_, config_file) -> (
+                      match parse_file config_file with
+                      | Ok _parse_file ->
+                          (*TODO: handle configuration file properly*)
+                          Logs.info (fun m ->
+                              m "Dnsmasq config file parsed correctly");
+                          None
+                      | Error (`Msg err) ->
+                          Logs.err (fun m ->
+                              m "Error parsing dnsmasq configuration file: %s"
+                                err);
+                          Some (`Redirect ("/configuration", None))))))
       | `POST _, s when String.starts_with s ~prefix:"/blocklist/delete/" -> (
           (* NOTE: here we don't need the body because we embed in the path *)
           let off = String.length "/blocklist/delete/" in
