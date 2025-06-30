@@ -110,6 +110,28 @@ let dashboard_layout ?(page_title = "Dashboard | DNSvizor") ~content () =
                                [];
                              span [ txt "Block list" ];
                            ];
+                         a
+                           ~a:
+                             [
+                               a_href "/configuration";
+                               a_class
+                                 [
+                                   "hover:bg-cyan-200 hover:text-cyan-500 \
+                                    font-semibold hover:font-bold \
+                                    cursor-pointer rounded p-4 w-full flex \
+                                    items-center space-x-1";
+                                 ];
+                             ]
+                           [
+                             i
+                               ~a:
+                                 [
+                                   a_class
+                                     [ "fa-solid fa-cog text-cyan-500 text-sm" ];
+                                 ]
+                               [];
+                             span [ txt "Configuration" ];
+                           ];
                        ];
                    ];
                  section
