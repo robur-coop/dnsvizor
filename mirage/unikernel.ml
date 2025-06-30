@@ -349,6 +349,23 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Logs.err (fun m ->
               m "Got an error from %a:%d: %a" Ipaddr.pp ipaddr port pp_error err)
 
+    let to_map ~assoc m =
+      let open Multipart_form in
+      let rec go (map, rest) = function
+        | Leaf { header; body } -> (
+            match
+              Option.bind
+                (Header.content_disposition header)
+                Content_disposition.name
+            with
+            | Some name -> (Map.add name (None, List.assoc body assoc) map, rest)
+            | None -> (map, (body, (None, List.assoc body assoc)) :: rest))
+        | Multipart { body; _ } ->
+            let fold acc = function Some elt -> go acc elt | None -> acc in
+            List.fold_left fold (map, rest) body
+      in
+      go (Map.empty, []) m
+
     let web_ui_handler resolver js_file req_method path =
       match (req_method, path) with
       | `GET, "/main.js" -> Some (`Content (js_file, Some "text/javascript"))
@@ -430,33 +447,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           in
           Some (`Content (Dashboard.dashboard_layout ~content (), None))
       | `POST (content_type_header, data), "/blocklist/add" -> (
-          let to_map ~assoc m =
-            let open Multipart_form in
-            let rec go (map, rest) = function
-              | Leaf { header; body } -> (
-                  let filename =
-                    Option.bind
-                      (Header.content_disposition header)
-                      Content_disposition.filename
-                  in
-                  match
-                    Option.bind
-                      (Header.content_disposition header)
-                      Content_disposition.name
-                  with
-                  | Some name ->
-                      (Map.add name (filename, List.assoc body assoc) map, rest)
-                  | None ->
-                      (map, (body, (filename, List.assoc body assoc)) :: rest))
-              | Multipart { body; _ } ->
-                  let fold acc = function
-                    | Some elt -> go acc elt
-                    | None -> acc
-                  in
-                  List.fold_left fold (map, rest) body
-            in
-            go (Map.empty, []) m
-          in
           let content_type =
             Option.fold ~none:"application/x-www-form-urlencoded\r\n"
               ~some:(fun s -> s ^ "\r\n")
@@ -464,6 +454,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           in
           match Multipart_form.Content_type.of_string content_type with
           | Error (`Msg e) ->
+              (* FIXME: bad request I guess *)
               Logs.err (fun m -> m "Bad content-type header: %s" e);
               Some (`Redirect ("/blocklist", None))
           | Ok ct -> (
