@@ -358,11 +358,19 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 (Header.content_disposition header)
                 Content_disposition.name
             with
-            | Some name -> (Map.add name (None, List.assoc body assoc) map, rest)
-            | None -> (map, (body, (None, List.assoc body assoc)) :: rest))
+            | Some name -> (
+                match List.assoc_opt body assoc with
+                | Some value -> (Map.add name (None, value) map, rest)
+                | None -> (map, rest))
+            | None ->
+                Logs.warn (fun m ->
+                    m "multipart-form: discarding field with no name.");
+                (map, rest))
         | Multipart { body; _ } ->
-            let fold acc = function Some elt -> go acc elt | None -> acc in
-            List.fold_left fold (map, rest) body
+            List.fold_left
+              (fun acc elt ->
+                match elt with Some elt -> go acc elt | None -> acc)
+              (map, rest) body
       in
       go (Map.empty, []) m
 
