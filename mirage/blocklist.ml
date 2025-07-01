@@ -129,6 +129,7 @@ let block_page (manual_blocked_domains, lists) =
                     [
                       a_action "/blocklist/add";
                       a_method `Post;
+                      a_enctype "multipart/form-data";
                       a_class [ "flex mb-4 gap-2" ];
                     ]
                   [
@@ -136,6 +137,7 @@ let block_page (manual_blocked_domains, lists) =
                       ~a:
                         [
                           a_input_type `Text;
+                          a_name "domain";
                           a_placeholder
                             "Add a domain (example.com or sub.example.com)";
                           a_class
@@ -179,7 +181,12 @@ let block_page (manual_blocked_domains, lists) =
                       a_class
                         [ "text-2xl font-semibold mt-8 mb-4 text-cyan-700" ];
                     ]
-                  [ txt "Blocked domains" ];
+                  [
+                    txt
+                      ("Blocked domains ("
+                      ^ string_of_int (List.length manual_blocked_domains)
+                      ^ ")");
+                  ];
                 form
                   ~a:[ a_id "delete-form" ]
                   [
