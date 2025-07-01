@@ -541,7 +541,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     request.H1.Request.target);
               let r =
                 match request.H1.Request.meth with
-                | `GET -> Lwt.return (Either.Left `GET)
+                | `GET -> Lwt.return (Ok `GET)
                 | `POST ->
                     (* TODO: reasonable max size *)
                     let initial_size =
@@ -566,19 +566,18 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     let content_type =
                       H1.Headers.get request.headers "content-type"
                     in
-                    finished >|= fun data ->
-                    Either.Left (`Post (content_type, data))
-                | _ -> Lwt.return (Either.Right `Method_not_allowed)
+                    finished >|= fun data -> Ok (`Post (content_type, data))
+                | _ -> Lwt.return (Error `Method_not_allowed)
               in
               r
-              >|= Either.map_left (fun meth ->
+              >|= Result.map (fun meth ->
                       ( web_ui_handler resolver js_file meth
                           request.H1.Request.target,
                         meth ))
               >>= function
-              | Left (Some (`Content (content, content_type)), _) ->
+              | Ok (Some (`Content (content, content_type)), _) ->
                   reply ?content_type reqd content
-              | Left (Some (`Redirect (location, action)), _) -> (
+              | Ok (Some (`Redirect (location, action)), _) -> (
                   let headers = H1.Headers.of_list [ ("location", location) ] in
                   let resp = H1.Response.create ~headers `See_other in
                   Reqd.respond_with_string reqd resp "";
@@ -587,7 +586,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   | Some `Update ->
                       if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
                       else Lwt.return_unit)
-              | Left (None, _meth) ->
+              | Ok (None, _meth) ->
                   let headers =
                     H1.Headers.of_list [ ("connection", "close") ]
                   in
@@ -596,7 +595,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   Lwt.return_unit
               (* HTTP/2 (RFC7540) is the minimum RECOMMENDED version of HTTP for use
                  with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2 *)
-              | Right status ->
+              | Error status ->
                   let headers =
                     H1.Headers.of_list [ ("connection", "close") ]
                   in
@@ -623,7 +622,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 request.H2.Request.target);
           let r =
             match request.H2.Request.meth with
-            | `GET -> Lwt.return (Either.Left `GET)
+            | `GET -> Lwt.return (Ok `GET)
             | `POST ->
                 (* TODO: reasonable max size *)
                 let initial_size =
@@ -648,20 +647,19 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 let content_type =
                   H2.Headers.get request.headers "content-type"
                 in
-                finished >|= fun data ->
-                Either.Left (`POST (content_type, data))
-            | _ -> Lwt.return (Either.Right `Method_not_allowed)
+                finished >|= fun data -> Ok (`POST (content_type, data))
+            | _ -> Lwt.return (Error `Method_not_allowed)
           in
           Lwt.async (fun () ->
               r
-              >|= Either.map_left (fun meth ->
+              >|= Result.map (fun meth ->
                       ( web_ui_handler resolver js_file meth
                           request.H2.Request.target,
                         meth ))
               >|= function
-              | Either.Left (Some (`Content (content, content_type)), _) ->
+              | Ok (Some (`Content (content, content_type)), _) ->
                   reply ?content_type reqd content
-              | Left (Some (`Redirect (location, action)), _) -> (
+              | Ok (Some (`Redirect (location, action)), _) -> (
                   let headers = H2.Headers.of_list [ ("location", location) ] in
                   let resp = H2.Response.create ~headers `See_other in
                   Reqd.respond_with_string reqd resp "";
@@ -672,7 +670,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                           if Lwt_mvar.is_empty mvar then
                             Lwt_mvar.put mvar `Update
                           else Lwt.return_unit))
-              | Left (None, meth) -> (
+              | Ok (None, meth) -> (
                   match (meth, request.H2.Request.target) with
                   | `GET, path when String.starts_with ~prefix:"/dns-query" path
                     ->
@@ -710,7 +708,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       in
                       let resp = H2.Response.create ~headers `Not_found in
                       Reqd.respond_with_string reqd resp "")
-              | Either.Right status ->
+              | Error status ->
                   let headers =
                     H2.Headers.of_list [ ("connection", "close") ]
                   in
