@@ -462,26 +462,25 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           in
           match Multipart_form.Content_type.of_string content_type with
           | Error (`Msg e) ->
-              (* FIXME: bad request I guess *)
               Logs.err (fun m -> m "Bad content-type header: %s" e);
-              Some (`Redirect ("/blocklist", None))
+              Some (`Bad_request ("/blocklist", None))
           | Ok ct -> (
               match Multipart_form.of_string_to_list data ct with
               | Error (`Msg e) ->
                   Logs.err (fun m -> m "Error parsing form: %s" e);
-                  Some (`Redirect ("/blocklist", None))
+                  Some (`Bad_request ("/blocklist", None))
               | Ok (m, assoc) -> (
                   let multipart_body, _r = to_map ~assoc m in
                   match Map.find_opt "domain" multipart_body with
                   | None ->
                       Logs.err (fun m -> m "No domain field in form");
-                      Some (`Redirect ("/blocklist", None))
+                      Some (`Bad_request ("/blocklist", None))
                   | Some (_, domain_str) -> (
                       match Domain_name.of_string domain_str with
                       | Error (`Msg e) ->
                           Logs.debug (fun m ->
                               m "client wanted to add a bad domain: %s" e);
-                          Some (`Redirect ("/blocklist", None))
+                          Some (`Bad_request ("/blocklist", None))
                       | Ok domain ->
                           let trie = Resolver.primary_data resolver in
                           let trie =
@@ -586,6 +585,15 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   | Some `Update ->
                       if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
                       else Lwt.return_unit)
+              | Ok (Some (`Bad_request (location, action)), _) -> (
+                  let headers = H1.Headers.of_list [ ("location", location) ] in
+                  let resp = H1.Response.create ~headers `Bad_request in
+                  Reqd.respond_with_string reqd resp "";
+                  match action with
+                  | None -> Lwt.return_unit
+                  | Some `Update ->
+                      if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
+                      else Lwt.return_unit)
               | Ok (None, _meth) ->
                   let headers =
                     H1.Headers.of_list [ ("connection", "close") ]
@@ -662,6 +670,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               | Ok (Some (`Redirect (location, action)), _) -> (
                   let headers = H2.Headers.of_list [ ("location", location) ] in
                   let resp = H2.Response.create ~headers `See_other in
+                  Reqd.respond_with_string reqd resp "";
+                  match action with
+                  | None -> ()
+                  | Some `Update ->
+                      Lwt.async (fun () ->
+                          if Lwt_mvar.is_empty mvar then
+                            Lwt_mvar.put mvar `Update
+                          else Lwt.return_unit))
+              | Ok (Some (`Bad_request (location, action)), _) -> (
+                  let headers = H2.Headers.of_list [ ("location", location) ] in
+                  let resp = H2.Response.create ~headers `Bad_request in
                   Reqd.respond_with_string reqd resp "";
                   match action with
                   | None -> ()
