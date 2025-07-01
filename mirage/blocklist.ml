@@ -128,6 +128,7 @@ let block_page (manual_blocked_domains, lists) =
                     [
                       a_action "/blocklist/add";
                       a_method `Post;
+                      a_enctype "multipart/form-data";
                       a_class [ "flex mb-4 gap-2" ];
                     ]
                   [
