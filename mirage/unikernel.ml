@@ -505,20 +505,19 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           in
           match Multipart_form.Content_type.of_string content_type with
           | Error (`Msg e) ->
-              (* FIXME: bad request I guess *)
               Logs.err (fun m -> m "Bad content-type header: %s" e);
-              Some (`Redirect ("/configuraton", None))
+              Some (`Bad_request ("/configuraton", None))
           | Ok ct -> (
               match Multipart_form.of_string_to_list data ct with
               | Error (`Msg e) ->
                   Logs.err (fun m -> m "Error parsing form: %s" e);
-                  Some (`Redirect ("/configuration", None))
+                  Some (`Bad_request ("/configuration", None))
               | Ok (m, assoc) -> (
                   let multipart_body, _r = to_map ~assoc m in
                   match Map.find_opt "dnsmasq_config_file" multipart_body with
                   | None ->
                       Logs.err (fun m -> m "No dnsmasq config file uploaded");
-                      Some (`Redirect ("/configuration", None))
+                      Some (`Bad_request ("/configuration", None))
                   | Some (_, config_file) -> (
                       match parse_file config_file with
                       | Ok _parse_file ->
@@ -530,7 +529,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                           Logs.err (fun m ->
                               m "Error parsing dnsmasq configuration file: %s"
                                 err);
-                          Some (`Redirect ("/configuration", None))))))
+                          Some (`Bad_request ("/configuration", None))))))
       | `POST _, s when String.starts_with s ~prefix:"/blocklist/delete/" -> (
           (* NOTE: here we don't need the body because we embed in the path *)
           let off = String.length "/blocklist/delete/" in
