@@ -375,6 +375,29 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       go (Map.empty, []) m
 
     let web_ui_handler resolver js_file req_method path =
+      let get_multipart_body content_type_header data field =
+        let content_type =
+          Option.fold ~none:"application/x-www-form-urlencoded\r\n"
+            ~some:(fun s -> s ^ "\r\n")
+            content_type_header
+        in
+        match Multipart_form.Content_type.of_string content_type with
+        | Error (`Msg e) ->
+            Logs.err (fun m -> m "Bad content-type header: %s" e);
+            Error (`Msg "Bad content-type header")
+        | Ok ct -> (
+            match Multipart_form.of_string_to_list data ct with
+            | Error (`Msg e) ->
+                Logs.err (fun m -> m "Error parsing form: %s" e);
+                Error (`Msg "Error parsing form")
+            | Ok (m, assoc) -> (
+                let multipart_body, _r = to_map ~assoc m in
+                match Map.find_opt field multipart_body with
+                | None ->
+                    Logs.err (fun m -> m "No %s in form" field);
+                    Error (`Msg (field ^ " not found in form"))
+                | Some (_, body_str) -> Ok body_str))
+      in
       match (req_method, path) with
       | `GET, "/main.js" -> Some (`Content (js_file, Some "text/javascript"))
       | `GET, "/" | `GET, "/dashboard" ->
@@ -461,73 +484,42 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   ~content:Configuration.configuration_page (),
                 None ))
       | `POST (content_type_header, data), "/blocklist/add" -> (
-          let content_type =
-            Option.fold ~none:"application/x-www-form-urlencoded\r\n"
-              ~some:(fun s -> s ^ "\r\n")
-              content_type_header
-          in
-          match Multipart_form.Content_type.of_string content_type with
-          | Error (`Msg e) ->
-              Logs.err (fun m -> m "Bad content-type header: %s" e);
-              Some (`Bad_request ("/blocklist", None))
-          | Ok ct -> (
-              match Multipart_form.of_string_to_list data ct with
+          match get_multipart_body content_type_header data "domain" with
+          | Ok domain -> (
+              match Domain_name.of_string domain with
               | Error (`Msg e) ->
-                  Logs.err (fun m -> m "Error parsing form: %s" e);
+                  Logs.debug (fun m ->
+                      m "client wanted to add a bad domain: %s" e);
                   Some (`Bad_request ("/blocklist", None))
-              | Ok (m, assoc) -> (
-                  let multipart_body, _r = to_map ~assoc m in
-                  match Map.find_opt "domain" multipart_body with
-                  | None ->
-                      Logs.err (fun m -> m "No domain field in form");
-                      Some (`Bad_request ("/blocklist", None))
-                  | Some (_, domain_str) -> (
-                      match Domain_name.of_string domain_str with
-                      | Error (`Msg e) ->
-                          Logs.debug (fun m ->
-                              m "client wanted to add a bad domain: %s" e);
-                          Some (`Bad_request ("/blocklist", None))
-                      | Ok domain ->
-                          let trie = Resolver.primary_data resolver in
-                          let trie =
-                            Dns_trie.insert domain Dns.Rr_map.Soa
-                              (Blocklist.soa "web-ui" 0l)
-                              trie
-                          in
-                          Resolver.update_primary_data resolver trie;
-                          Some (`Redirect ("/blocklist", None))))))
-      | `POST (content_type_header, data), "/configuration/upload" -> (
-          let content_type =
-            Option.fold ~none:"multipart/form-data\r\n"
-              ~some:(fun s -> s ^ "\r\n")
-              content_type_header
-          in
-          match Multipart_form.Content_type.of_string content_type with
+              | Ok domain ->
+                  let trie = Resolver.primary_data resolver in
+                  let trie =
+                    Dns_trie.insert domain Dns.Rr_map.Soa
+                      (Blocklist.soa "web-ui" 0l)
+                      trie
+                  in
+                  Resolver.update_primary_data resolver trie;
+                  Some (`Redirect ("/blocklist", None)))
           | Error (`Msg e) ->
-              Logs.err (fun m -> m "Bad content-type header: %s" e);
-              Some (`Bad_request ("/configuraton", None))
-          | Ok ct -> (
-              match Multipart_form.of_string_to_list data ct with
-              | Error (`Msg e) ->
-                  Logs.err (fun m -> m "Error parsing form: %s" e);
-                  Some (`Bad_request ("/configuration", None))
-              | Ok (m, assoc) -> (
-                  let multipart_body, _r = to_map ~assoc m in
-                  match Map.find_opt "dnsmasq_config" multipart_body with
-                  | None ->
-                      Logs.err (fun m -> m "No dnsmasq config provided");
-                      Some (`Bad_request ("/configuration", None))
-                  | Some (_, config_file) -> (
-                      match Dnsvizor.Config_parser.parse_file config_file with
-                      | Ok _parsed_dnsmasq_config ->
-                          (*TODO: handle configuration file properly*)
-                          Logs.info (fun m ->
-                              m "Dnsmasq config parsed correctly");
-                          None
-                      | Error (`Msg err) ->
-                          Logs.err (fun m ->
-                              m "Error parsing dnsmasq configuration: %s" err);
-                          Some (`Bad_request ("/configuration", None))))))
+              Logs.err (fun m -> m "multipart-form error: %s" e);
+              Some (`Bad_request ("/blocklist", None)))
+      | `POST (content_type_header, data), "/configuration/upload" -> (
+          match
+            get_multipart_body content_type_header data "dnsmasq_config"
+          with
+          | Ok config_data -> (
+              match Dnsvizor.Config_parser.parse_file config_data with
+              | Ok _parsed_dnsmasq_config ->
+                  (*TODO: handle configuration file properly*)
+                  Logs.info (fun m -> m "Dnsmasq config parsed correctly");
+                  None
+              | Error (`Msg err) ->
+                  Logs.err (fun m ->
+                      m "Error parsing dnsmasq configuration: %s" err);
+                  Some (`Bad_request ("/configuration", None)))
+          | Error (`Msg e) ->
+              Logs.err (fun m -> m "multipart-form error: %s" e);
+              Some (`Bad_request ("/configuration", None)))
       | `POST _, s when String.starts_with s ~prefix:"/blocklist/delete/" -> (
           (* NOTE: here we don't need the body because we embed in the path *)
           let off = String.length "/blocklist/delete/" in
