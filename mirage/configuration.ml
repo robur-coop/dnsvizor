@@ -95,8 +95,8 @@ let configuration_page =
                         textarea
                           ~a:
                             [
-                              a_id "file_content_display";
-                              a_name "file_content_preview";
+                              a_id "dnsmasq_config";
+                              a_name "dnsmasq_config";
                               a_rows 15;
                               a_class
                                 [
@@ -106,8 +106,6 @@ let configuration_page =
                                    focus:outline-none focus:border-blue-500 \
                                    focus:ring-1 focus:ring-blue-500";
                                 ];
-                              a_readonly ();
-                              (* Make it read-only for preview *)
                             ]
                           (txt "");
                       ];
@@ -125,7 +123,7 @@ let configuration_page =
                                    focus:ring-opacity-50";
                                 ];
                             ]
-                          [ txt "Upload Configuration" ];
+                          [ txt "Save Configuration" ];
                       ];
                   ];
               ];

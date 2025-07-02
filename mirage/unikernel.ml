@@ -513,21 +513,20 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   Some (`Bad_request ("/configuration", None))
               | Ok (m, assoc) -> (
                   let multipart_body, _r = to_map ~assoc m in
-                  match Map.find_opt "dnsmasq_config_file" multipart_body with
+                  match Map.find_opt "dnsmasq_config" multipart_body with
                   | None ->
-                      Logs.err (fun m -> m "No dnsmasq config file uploaded");
+                      Logs.err (fun m -> m "No dnsmasq config provided");
                       Some (`Bad_request ("/configuration", None))
                   | Some (_, config_file) -> (
                       match Dnsvizor.Config_parser.parse_file config_file with
                       | Ok _parsed_dnsmasq_config ->
                           (*TODO: handle configuration file properly*)
                           Logs.info (fun m ->
-                              m "Dnsmasq config file parsed correctly");
+                              m "Dnsmasq config parsed correctly");
                           None
                       | Error (`Msg err) ->
                           Logs.err (fun m ->
-                              m "Error parsing dnsmasq configuration file: %s"
-                                err);
+                              m "Error parsing dnsmasq configuration: %s" err);
                           Some (`Bad_request ("/configuration", None))))))
       | `POST _, s when String.starts_with s ~prefix:"/blocklist/delete/" -> (
           (* NOTE: here we don't need the body because we embed in the path *)

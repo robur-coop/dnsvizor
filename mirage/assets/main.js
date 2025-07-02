@@ -2,7 +2,7 @@
 document.addEventListener('DOMContentLoaded', () => {
     const fileInput = document.getElementById('dnsmasq_config_file');
     const selectedFileNameSpan = document.getElementById('selected_file_name');
-    const fileContentDisplayArea = document.getElementById('file_content_display');
+    const fileContentDisplayArea = document.getElementById('dnsmasq_config');
 
     // Listen for changes on the hidden file input
     fileInput.addEventListener('change', (event) => {
