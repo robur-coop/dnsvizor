@@ -1,5 +1,4 @@
 open Lwt.Infix
-open Dnsvizor.Config_parser
 
 module CA = struct
   let prefix =
@@ -519,7 +518,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       Logs.err (fun m -> m "No dnsmasq config file uploaded");
                       Some (`Bad_request ("/configuration", None))
                   | Some (_, config_file) -> (
-                      match parse_file config_file with
+                      match Dnsvizor.Config_parser.parse_file config_file with
                       | Ok _parsed_dnsmasq_config ->
                           (*TODO: handle configuration file properly*)
                           Logs.info (fun m ->
