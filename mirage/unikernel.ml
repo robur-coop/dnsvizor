@@ -520,7 +520,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       Some (`Bad_request ("/configuration", None))
                   | Some (_, config_file) -> (
                       match parse_file config_file with
-                      | Ok _parse_file ->
+                      | Ok _parsed_dnsmasq_config ->
                           (*TODO: handle configuration file properly*)
                           Logs.info (fun m ->
                               m "Dnsmasq config file parsed correctly");
