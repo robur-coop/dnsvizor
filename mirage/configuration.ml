@@ -1,4 +1,4 @@
-let configuration_page =
+let configuration_page config =
   Tyxml_html.(
     main
       ~a:[ a_class [ "w-full text-gray-900" ] ]
@@ -107,7 +107,7 @@ let configuration_page =
                                    focus:ring-1 focus:ring-blue-500";
                                 ];
                             ]
-                          (txt "");
+                          (txt config);
                       ];
                     div
                       ~a:[ a_class [ "flex justify-end" ] ]

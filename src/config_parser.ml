@@ -31,23 +31,21 @@ let infinite = 1 lsl 32 (* DHCP has 32 bits for this *)
 let lease_time =
   take_while1 (function '0' .. '9' -> true | _ -> false)
   >>= (fun dur ->
-        match int_of_string_opt dur with
-        | None -> fail (Fmt.str "Couldn't convert %S to an integer" dur)
-        | Some n ->
-            choice ~failure_msg:"bad lease time"
-              [
-                string "w" *> return ("w", n * week);
-                string "d" *> return ("d", n * day);
-                string "h" *> return ("h", n * hour);
-                string "m" *> return ("m", n * minute);
-                return ("", n);
-              ]
-            >>= fun (c, r) ->
-            if r > 0 && r < infinite then return r
-            else
-              fail
-                (Fmt.str "Value %u (from %S%s) does not fit into 32 bits" r dur
-                   c))
+  match int_of_string_opt dur with
+  | None -> fail (Fmt.str "Couldn't convert %S to an integer" dur)
+  | Some n ->
+      choice ~failure_msg:"bad lease time"
+        [
+          string "w" *> return ("w", n * week);
+          string "d" *> return ("d", n * day);
+          string "h" *> return ("h", n * hour);
+          string "m" *> return ("m", n * minute);
+          return ("", n);
+        ]
+      >>= fun (c, r) ->
+      if r > 0 && r < infinite then return r
+      else
+        fail (Fmt.str "Value %u (from %S%s) does not fit into 32 bits" r dur c))
   <|> string "infinite" *> return infinite
 
 let isspace = function
@@ -63,7 +61,8 @@ let conf_end_of_directive =
   in
   fix (fun r ->
       end_of_line <|> end_of_input
-      <|> (* A comment in a directive is only allowed if separated by a space *)
+      <|>
+      (* A comment in a directive is only allowed if separated by a space *)
       skip isspace *> (comment <?> "comment" <|> r))
   <?> "config file end-of-directive"
 
@@ -232,7 +231,9 @@ let dhcp_host end_of_directive =
   let until_comma =
     scan_string () (fun () c ->
         (* FIXME: probably be more precise in accepted characters *)
-        match c with ',' -> None | _ -> Some ())
+        match c with
+        | ',' -> None
+        | _ -> Some ())
   in
   let lease_time = lease_time >>| fun lease -> `Lease_time lease in
   let id_thing =
@@ -242,7 +243,9 @@ let dhcp_host end_of_directive =
            char '*' *> return `Any_client_id;
            (* FIXME: probably be more precise in accepted characters *)
            ( scan false (fun is_hex -> function
-               | ',' -> None | ':' -> Some true | _ -> Some is_hex)
+               | ',' -> None
+               | ':' -> Some true
+               | _ -> Some is_hex)
            <* commit
            >>= fun (name, is_hex) ->
              if is_hex then

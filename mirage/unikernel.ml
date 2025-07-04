@@ -107,6 +107,7 @@ module K = struct
     Mirage_runtime.register_arg
       Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
 
+  (* various ignored DNSmasq configuration options *)
   let interface =
     let doc =
       Arg.info ~docs:Manpage.s_none ~doc:"Interface to listen on."
@@ -149,6 +150,7 @@ module K = struct
     in
     Mirage_runtime.register_arg Arg.(value & flag doc)
 
+  (* Further configuration options, not ignored *)
   let dnssec =
     let doc =
       Arg.info ~doc:"Validate DNS replies and cache DNSSEC data." [ "dnssec" ]
@@ -217,6 +219,79 @@ module K = struct
 end
 
 module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
+  type t = {
+    mac : Macaddr.t;
+    mutable configuration : string;
+    mutable dhcp_configuration : Dhcp_server.Config.t option;
+    mutable dhcp_leases : Dhcp_server.Lease.database;
+  }
+
+  let dhcp_configuration_of_dhcp_range mac dhcp_range =
+    let v4_address = Ipaddr.V4.Prefix.address (K.ipv4 ()) in
+    let options =
+      (match K.ipv4_gateway () with
+      | None -> []
+      | Some x -> [ Dhcp_wire.Routers [ x ] ])
+      @ [ Dhcp_wire.Dns_servers [ v4_address ] ]
+      (* Dhcp_wire.Domain_name __ *)
+    in
+    let range =
+      (* doesn't check start < stop *)
+      let start = dhcp_range.Dnsvizor.Config_parser.start_addr in
+      let stop =
+        (* TODO assumes /24 also automatically fills stuff *)
+        match dhcp_range.end_addr with
+        | Some i -> i
+        | None ->
+            Ipaddr.V4.of_int32
+              Int32.(
+                logand 0xfffffffel
+                  (logor 0x000000fel (Ipaddr.V4.to_int32 start)))
+      in
+      Some (start, stop)
+    in
+    let default_lease_time = dhcp_range.lease_time in
+    (* TODO: what should be the max_lease_time? 2 * default_lease_time *)
+    Some
+      (Dhcp_server.Config.make ?hostname:None ?default_lease_time
+         ?max_lease_time:None ?hosts:None ~addr_tuple:(v4_address, mac)
+         ~network:(Ipaddr.V4.Prefix.prefix (K.ipv4 ()))
+         ~range ~options ())
+
+  let of_commandline mac () =
+    let dhcp_configuration =
+      match K.dhcp_range () with
+      | None -> None
+      | Some dhcp_range -> dhcp_configuration_of_dhcp_range mac dhcp_range
+    in
+    let dhcp_leases = Dhcp_server.Lease.make_db () in
+    let configuration =
+      String.concat "\n"
+        [
+          (match K.dhcp_range () with
+          | None -> ""
+          | Some x ->
+              Fmt.str "dhcp-range: %a" Dnsvizor.Config_parser.pp_dhcp_range x);
+          (if K.dnssec () then "dnssec" else "");
+        ]
+    in
+    { mac; configuration; dhcp_configuration; dhcp_leases }
+
+  let update_configuration t config
+      (parsed_config :
+        [ `Dhcp_range of Dnsvizor.Config_parser.dhcp_range | `Dnssec | `Ignored ]
+        list) =
+    t.configuration <- config;
+    match
+      List.find_opt
+        (function `Dhcp_range _ -> true | _ -> false)
+        parsed_config
+    with
+    | Some (`Dhcp_range dhcp_range) ->
+        let dhcp_config = dhcp_configuration_of_dhcp_range t.mac dhcp_range in
+        t.dhcp_configuration <- dhcp_config
+    | _ -> ()
+
   let js_file assets =
     ASSETS.get assets (Mirage_kv.Key.v "main.js") >|= function
     | Error _e -> invalid_arg "JS file could not be loaded"
@@ -235,11 +310,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
     let pp_error = N.pp_error
 
-    type t = {
-      net : N.t;
-      dhcp_config : Dhcp_server.Config.t option;
-      mutable dhcp_leases : Dhcp_server.Lease.database;
-    }
+    type nonrec t = { net : N.t; configuration : t }
 
     let write t = N.write t.net
 
@@ -252,10 +323,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           let now =
             Mirage_mtime.elapsed_ns () |> Duration.to_sec |> Int32.of_int
           in
-          match Dhcp_server.Input.input_pkt config t.dhcp_leases pkt now with
+          match
+            Dhcp_server.Input.input_pkt config t.configuration.dhcp_leases pkt
+              now
+          with
           | Dhcp_server.Input.Silence -> Lwt.return_unit
           | Dhcp_server.Input.Update leases ->
-              t.dhcp_leases <- leases;
+              t.configuration.dhcp_leases <- leases;
               Logs.debug (fun m ->
                   m "Received packet %a - updated lease database"
                     Dhcp_wire.pp_pkt pkt);
@@ -267,7 +341,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               Logs.err (fun m -> m "%s" e);
               Lwt.return_unit
           | Dhcp_server.Input.Reply (reply, leases) ->
-              t.dhcp_leases <- leases;
+              t.configuration.dhcp_leases <- leases;
               Logs.debug (fun m -> m "Received packet %a" Dhcp_wire.pp_pkt pkt);
               N.write t.net
                 ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet)
@@ -282,7 +356,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           let dst = hdr.Ethernet.Packet.destination in
           Macaddr.compare dst (N.mac t.net) = 0 || not (Macaddr.is_unicast dst)
         in
-        match t.dhcp_config with
+        match t.configuration.dhcp_configuration with
         | None -> net buf
         | Some config -> (
             match Ethernet.Packet.of_cstruct buf with
@@ -294,8 +368,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       N.listen t.net ~header_size dhcp_or_not
 
-    let connect net ?(dhcp_leases = Dhcp_server.Lease.make_db ()) dhcp_config =
-      { net; dhcp_config; dhcp_leases }
+    let connect net configuration = { net; configuration }
 
     let disconnect _ =
       Logs.warn (fun m -> m "ignoring disconnect");
@@ -335,8 +408,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `Exn exn -> Fmt.pf ppf "Exception: %s" (Printexc.to_string exn)
       | `Internal_server_error -> Fmt.string ppf "Internal server error"
 
-    let error :
-        type reqd headers request response ro wo.
+    let error : type reqd headers request response ro wo.
         Ipaddr.t * int ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         ?request:request ->
@@ -374,7 +446,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       go (Map.empty, []) m
 
-    let web_ui_handler resolver js_file req_method path =
+    let web_ui_handler t resolver js_file req_method path =
       let get_multipart_body content_type_header data field =
         let content_type =
           Option.fold ~none:"application/x-www-form-urlencoded\r\n"
@@ -469,8 +541,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `GET, "/querylog" ->
           Some
             (`Content
-              ( Dashboard.dashboard_layout ~content:Query_logs.query_page (),
-                None ))
+               ( Dashboard.dashboard_layout ~content:Query_logs.query_page (),
+                 None ))
       | `GET, "/blocklist" ->
           let content =
             Blocklist.block_page
@@ -480,9 +552,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `GET, "/configuration" ->
           Some
             (`Content
-              ( Dashboard.dashboard_layout
-                  ~content:Configuration.configuration_page (),
-                None ))
+               ( Dashboard.dashboard_layout
+                   ~content:(Configuration.configuration_page t.configuration)
+                   (),
+                 None ))
       | `POST (content_type_header, data), "/blocklist/add" -> (
           match get_multipart_body content_type_header data "domain" with
           | Ok domain -> (
@@ -509,10 +582,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           with
           | Ok config_data -> (
               match Dnsvizor.Config_parser.parse_file config_data with
-              | Ok _parsed_dnsmasq_config ->
-                  (*TODO: handle configuration file properly*)
-                  Logs.info (fun m -> m "Dnsmasq config parsed correctly");
-                  None
+              | Ok parsed_config ->
+                  update_configuration t config_data parsed_config;
+                  Some (`Redirect ("/configuration", None))
               | Error (`Msg err) ->
                   Logs.err (fun m ->
                       m "Error parsing dnsmasq configuration: %s" err);
@@ -535,8 +607,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Some (`Redirect ("/blocklist", Some `Update))
       | _ -> None
 
-    let request :
-        type reqd headers request response ro wo.
+    let request : type reqd headers request response ro wo.
+        _ ->
         _ ->
         _ ->
         HTTP.TLS.flow ->
@@ -545,7 +617,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         string ->
         unit =
-     fun resolver mvar _flow (dst, port) reqd protocol js_file ->
+     fun t resolver mvar _flow (dst, port) reqd protocol js_file ->
       match protocol with
       | Alpn.HTTP_1_1 (module Reqd) ->
           Lwt.async (fun () ->
@@ -600,7 +672,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler resolver js_file meth
+                      ( web_ui_handler t resolver js_file meth
                           request.H1.Request.target,
                         meth ))
               >>= function
@@ -691,7 +763,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt.async (fun () ->
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler resolver js_file meth
+                      ( web_ui_handler t resolver js_file meth
                           request.H2.Request.target,
                         meth ))
               >|= function
@@ -764,12 +836,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   let resp = H2.Response.create ~headers status in
                   Reqd.respond_with_string reqd resp "")
 
-    let handler resolver mvar js_file =
+    let handler t resolver mvar js_file =
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request resolver mvar flow dst reqd protocol js_file);
+            request t resolver mvar flow dst reqd protocol js_file);
       }
 
     let update_blocklist http_client resolver =
@@ -850,7 +922,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       (mvar, loop (K.dns_blocklist ()) [] (one_week ()))
 
-    let start_resolver stack tcp resolver http_client js_file =
+    let start_resolver t stack tcp resolver http_client js_file =
       let fresh_tls () =
         let ca = CA.make (K.name ()) (K.ca_key ()) in
         let cert, pk = Result.get_ok ca in
@@ -878,7 +950,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt_switch.turn_off stop
         in
         Resolver.update_tls resolver dns_tls;
-        let h2 = HTTP.alpn_service ~tls (handler resolver mvar js_file) in
+        let h2 = HTTP.alpn_service ~tls (handler t resolver mvar js_file) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         (* Due to the Lwt_switch [stop] [bell] will shut down the web server so
@@ -892,51 +964,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   end
 
   let start net assets =
-    (match K.dhcp_range () with
-    | None -> ()
-    | Some x ->
-        Logs.info (fun m ->
-            m "dhcp-range: %a" Dnsvizor.Config_parser.pp_dhcp_range x));
-    let v4_address = Ipaddr.V4.Prefix.address (K.ipv4 ()) in
-    let mac = N.mac net in
-    let dhcp_config =
-      match K.dhcp_range () with
-      | None -> None
-      | Some dhcp_range ->
-          let options =
-            (match K.ipv4_gateway () with
-            | None -> []
-            | Some x -> [ Dhcp_wire.Routers [ x ] ])
-            @ [ Dhcp_wire.Dns_servers [ v4_address ] ]
-            (* Dhcp_wire.Domain_name __ *)
-          in
-          let range =
-            (* doesn't check start < stop *)
-            let start = dhcp_range.Dnsvizor.Config_parser.start_addr in
-            let stop =
-              (* TODO assumes /24 also automatically fills stuff *)
-              match dhcp_range.end_addr with
-              | Some i -> i
-              | None ->
-                  Ipaddr.V4.of_int32
-                    Int32.(
-                      logand 0xfffffffel
-                        (logor 0x000000fel (Ipaddr.V4.to_int32 start)))
-            in
-            Some (start, stop)
-          in
-          let default_lease_time = dhcp_range.lease_time in
-          (* TODO: what should be the max_lease_time? 2 * default_lease_time *)
-          Some
-            (Dhcp_server.Config.make ?hostname:None ?default_lease_time
-               ?max_lease_time:None ?hosts:None ~addr_tuple:(v4_address, mac)
-               ~network:(Ipaddr.V4.Prefix.prefix (K.ipv4 ()))
-               ~range ~options ())
-    in
-    let net = Net.connect net dhcp_config in
+    let t = of_commandline (N.mac net) () in
+    let net = Net.connect net t in
     ETH.connect net >>= fun eth ->
     ARP.connect eth >>= fun arp ->
-    ARP.add_ip arp v4_address >>= fun () ->
+    ARP.add_ip arp (Ipaddr.V4.Prefix.address (K.ipv4 ())) >>= fun () ->
     IPV4.connect ~no_init:(K.ipv6_only ()) ~cidr:(K.ipv4 ())
       ?gateway:(K.ipv4_gateway ()) eth arp
     >>= fun ipv4 ->
@@ -947,7 +979,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     IPV4V6.connect ~ipv4_only:(K.ipv4_only ()) ~ipv6_only:(K.ipv6_only ()) ipv4
       ipv6
     >>= fun ip ->
-    js_file assets >>= fun js_file ->
     ICMP.connect ipv4 >>= fun icmp ->
     UDP.connect ip >>= fun udp ->
     TCP.connect ip >>= fun tcp ->
@@ -993,6 +1024,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate trie
     in
+    js_file assets >>= fun js_file ->
     (match K.dns_upstream () with
     | None ->
         Logs.info (fun m -> m "using a recursive resolver");
@@ -1002,7 +1034,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Mirage_crypto_rng.generate primary_t
         in
         Lwt.async (fun () ->
-            Daemon.start_resolver stack tcp resolver http_client js_file);
+            Daemon.start_resolver t stack tcp resolver http_client js_file);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
