@@ -219,6 +219,10 @@ module K = struct
     in
     Mirage_runtime.register_arg arg
 
+  let password =
+    let doc = Arg.info ~doc:"Password used for authentication" [ "password" ] in
+    Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
+
   let name =
     let ( let* ) = Result.bind in
     let parser str =
@@ -426,6 +430,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `Internal_server_error -> Fmt.string ppf "Internal server error"
 
     let error : type reqd headers request response ro wo.
+    let error : type reqd headers request response ro wo.
         Ipaddr.t * int ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         ?request:request ->
@@ -463,7 +468,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       go (Map.empty, []) m
 
-    let web_ui_handler t resolver js_file req_method path =
+    let web_ui_handler t resolver js_file password req_method path =
       let get_multipart_body content_type_header data field =
         let content_type =
           Option.fold ~none:"application/x-www-form-urlencoded\r\n"
@@ -624,8 +629,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Some (`Redirect ("/blocklist", Some `Update))
       | _ -> None
 
-    let request : type reqd headers request response ro wo.
-        _ ->
+    let request :
+        type reqd headers request response ro wo.
         _ ->
         _ ->
         HTTP.TLS.flow ->
@@ -633,8 +638,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         reqd ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         string ->
+        string option ->
         unit =
-     fun t resolver mvar _flow (dst, port) reqd protocol js_file ->
+     fun t resolver mvar _flow (dst, port) reqd protocol js_file password ->
       match protocol with
       | Alpn.HTTP_1_1 (module Reqd) ->
           Lwt.async (fun () ->
@@ -689,7 +695,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler t resolver js_file meth
+                      ( web_ui_handler t resolver js_file password meth
                           request.H1.Request.target,
                         meth ))
               >>= function
@@ -780,7 +786,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt.async (fun () ->
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler t resolver js_file meth
+                      ( web_ui_handler t resolver js_file password meth
                           request.H2.Request.target,
                         meth ))
               >|= function
@@ -853,12 +859,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   let resp = H2.Response.create ~headers status in
                   Reqd.respond_with_string reqd resp "")
 
-    let handler t resolver mvar js_file =
+    let handler t resolver mvar js_file password =
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request t resolver mvar flow dst reqd protocol js_file);
+            request t resolver mvar flow dst reqd protocol js_file password);
       }
 
     let update_blocklist http_client resolver =
@@ -939,7 +945,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       (mvar, loop (K.dns_blocklist ()) [] (one_week ()))
 
-    let start_resolver t stack tcp resolver http_client js_file =
+    let start_resolver t stack tcp resolver http_client js_file password =
       let fresh_tls () =
         let ca = CA.make (K.name ()) (K.ca_key ()) in
         let cert, pk = Result.get_ok ca in
@@ -967,7 +973,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt_switch.turn_off stop
         in
         Resolver.update_tls resolver dns_tls;
-        let h2 = HTTP.alpn_service ~tls (handler t resolver mvar js_file) in
+        let h2 =
+          HTTP.alpn_service ~tls (handler t resolver mvar js_file password)
+        in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         (* Due to the Lwt_switch [stop] [bell] will shut down the web server so
@@ -1057,8 +1065,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
+        let password = K.password () in
+
         Lwt.async (fun () ->
-            Daemon.start_resolver t stack tcp resolver http_client js_file);
+            Daemon.start_resolver t stack tcp resolver http_client js_file
+              password);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
