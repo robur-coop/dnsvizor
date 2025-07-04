@@ -494,6 +494,31 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       match (req_method, path) with
       | `GET, "/main.js" -> Some (`Content (js_file, Some "text/javascript"))
+      | `GET, "/login" ->
+          Some
+            (`Content
+               (Dashboard.dashboard_layout ~content:Login.login_page (), None))
+      | `POST (content_type_header, data), "/login" -> (
+          match password with
+          | Some cmd_password -> (
+              match get_multipart_body content_type_header data "password" with
+              | Ok password -> (
+                  match String.equal password cmd_password with
+                  | true ->
+                      Logs.info (fun m -> m "Password accepted");
+                      Some (`Redirect ("/dashboard", None))
+                  | false ->
+                      Logs.warn (fun m -> m "Wrong password");
+                      Some (`Bad_request ("/login", None)))
+              | Error (`Msg e) ->
+                  Logs.err (fun m -> m "multipart-form error: %s" e);
+                  Some (`Bad_request ("/login", None)))
+          | None ->
+              Logs.err (fun m ->
+                  m
+                    "password-auth: Password wasn't passed when starting the \
+                     unikernel");
+              Some (`Bad_request ("/login", None)))
       | `GET, "/" | `GET, "/dashboard" ->
           let map = Metrics.get_cache () in
           let lookup_src_by_name name =
@@ -574,10 +599,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `GET, "/configuration" ->
           Some
             (`Content
-               ( Dashboard.dashboard_layout
-                   ~content:(Configuration.configuration_page t.configuration)
-                   (),
-                 None ))
+              ( Dashboard.dashboard_layout
+                  ~content:Configuration.configuration_page (),
+                None ))
       | `POST (content_type_header, data), "/blocklist/add" -> (
           match get_multipart_body content_type_header data "domain" with
           | Ok domain -> (
