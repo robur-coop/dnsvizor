@@ -157,6 +157,23 @@ module K = struct
     in
     Mirage_runtime.register_arg Arg.(value & flag doc)
 
+  let qname_minimisation =
+    let doc =
+      Arg.info ~doc:"Use qname minimisation (RFC 9156)."
+        [ "qname-minimisation" ]
+    in
+    Mirage_runtime.register_arg Arg.(value & flag doc)
+
+  let opportunistic_tls =
+    let doc =
+      Arg.info
+        ~doc:
+          "Use opportunistic TLS from recursive resolver to authoriative (RFC \
+           9539)."
+        [ "opportunistic-tls-authoritative" ]
+    in
+    Mirage_runtime.register_arg Arg.(value & flag doc)
+
   let https_port =
     let doc = Arg.info ~doc:"The HTTPS port." [ "https-port" ] in
     Mirage_runtime.register_arg Arg.(value & opt int 443 & doc)
@@ -1029,7 +1046,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     | None ->
         Logs.info (fun m -> m "using a recursive resolver");
         let resolver =
-          Dns_resolver.create ?cache_size:(K.dns_cache ()) ~dnssec:(K.dnssec ())
+          let features =
+            (if K.dnssec () then [ `Dnssec ] else [])
+            @ (if K.qname_minimisation () then [ `Qname_minimisation ] else [])
+            @
+            if K.opportunistic_tls () then [ `Opportunistic_tls_authoritative ]
+            else []
+          in
+          Dns_resolver.create ?cache_size:(K.dns_cache ()) features
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
