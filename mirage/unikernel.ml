@@ -339,7 +339,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `Exn exn -> Fmt.pf ppf "Exception: %s" (Printexc.to_string exn)
       | `Internal_server_error -> Fmt.string ppf "Internal server error"
 
-    let error : type reqd headers request response ro wo.
+    let error :
+        type reqd headers request response ro wo.
         Ipaddr.t * int ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         ?request:request ->
@@ -406,7 +407,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `GET, "/login" ->
           Some
             (`Content
-               (Dashboard.dashboard_layout ~content:Login.login_page (), None))
+              (Dashboard.dashboard_layout ~content:Login.login_page (), None))
       | `POST (content_type_header, data), "/login" -> (
           match password with
           | Some cmd_password -> (
@@ -497,8 +498,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `GET, "/querylog" ->
           Some
             (`Content
-               ( Dashboard.dashboard_layout ~content:Query_logs.query_page (),
-                 None ))
+              ( Dashboard.dashboard_layout ~content:Query_logs.query_page (),
+                None ))
       | `GET, "/blocklist" ->
           let content =
             Blocklist.block_page
@@ -508,9 +509,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `GET, "/configuration" ->
           Some
             (`Content
-               ( Dashboard.dashboard_layout
-                   ~content:Configuration.configuration_page (),
-                 None ))
+              ( Dashboard.dashboard_layout
+                  ~content:Configuration.configuration_page (),
+                None ))
       | `POST (content_type_header, data), "/blocklist/add" -> (
           match get_multipart_body content_type_header data "domain" with
           | Ok domain -> (
@@ -563,7 +564,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Some (`Redirect ("/blocklist", Some `Update))
       | _ -> None
 
-    let request : type reqd headers request response ro wo.
+    let request :
+        type reqd headers request response ro wo.
         _ ->
         _ ->
         HTTP.TLS.flow ->
