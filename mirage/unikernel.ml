@@ -659,6 +659,30 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               Logs.info (fun m -> m "Got a new HTTPS request!");
               let request = Reqd.request reqd in
+              let auth_password =
+                match H1.Headers.get request.headers "Authorization" with
+                | Some header -> (
+                    match
+                      Base64.decode
+                        (String.trim
+                           (String.sub header 5 (String.length header - 5)))
+                      (*remove basic prefix and decode*)
+                    with
+                    | Ok decoded -> (
+                        let parts = String.split_on_char ':' decoded in
+                        match parts with
+                        | [ password ] -> Some password
+                        | [ _username; password ] -> Some password
+                        | _ ->
+                            Logs.warn (fun m ->
+                                m "password-auth: Bad authorization header");
+                            None)
+                    | Error _ ->
+                        Logs.warn (fun m ->
+                            m "password-auth: Bad base64 encoding in header");
+                        None)
+                | None -> None
+              in
               Logs.info (fun m ->
                   m "%a %s" H1.Method.pp_hum request.H1.Request.meth
                     request.H1.Request.target);
@@ -695,7 +719,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               r
               >|= Result.map (fun meth ->
                       ( web_ui_handler t resolver js_file password meth
-                          request.H1.Request.target,
+                          request.H1.Request.target auth_password,
                         meth ))
               >>= function
               | Ok (Some (`Content (content, content_type)), _) ->
@@ -759,6 +783,31 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           in
           Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
           let request = Reqd.request reqd in
+          let auth_password =
+            match H2.Headers.get request.headers "authorization" with
+            | Some header -> (
+                match
+                  Base64.decode
+                    (String.trim
+                       (String.sub header 5 (String.length header - 5)))
+                  (*remove basic prefix and decode*)
+                with
+                | Ok decoded -> (
+                    let parts = String.split_on_char ':' decoded in
+                    match parts with
+                    | [ password ] -> Some password
+                    | [ _username; password ] -> Some password
+                    | _ ->
+                        Logs.warn (fun m ->
+                            m "password-auth: Bad authorization header");
+                        None)
+                | Error (`Msg err) ->
+                    Logs.warn (fun m ->
+                        m "password-auth: Base64 decoding failed with error: %s"
+                          err);
+                    None)
+            | None -> None
+          in
           Logs.info (fun m ->
               m "%a %s" H2.Method.pp_hum request.H2.Request.meth
                 request.H2.Request.target);
