@@ -468,7 +468,29 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       go (Map.empty, []) m
 
-    let web_ui_handler t resolver js_file password req_method path =
+    let authenticate_user ~auth_password ~system_password () =
+      match (auth_password, system_password) with
+      | Some http_password, Some sys_password ->
+          if String.equal http_password sys_password then Ok ()
+          else (
+            Logs.warn (fun m ->
+                m
+                  "password-auth: Passwords do not match, authentication \
+                   failed.");
+            Error (`Msg "Wrong password provided."))
+      | None, _ ->
+          (* No password provided in the request *)
+          Logs.err (fun m -> m "password-auth: No password in http request");
+          Error (`Msg "User didn't input a password")
+      | _, None ->
+          (* The unikernel should be started with
+             a password set via the command line argument. *)
+          Logs.err (fun m ->
+              m "password-auth: System password not set in unikernel.");
+          Error (`Msg "Password not set via unikernel command line argument.")
+
+    let web_ui_handler t resolver js_file system_password req_method path
+        auth_password =
       let get_multipart_body content_type_header data field =
         let content_type =
           Option.fold ~none:"application/x-www-form-urlencoded\r\n"
