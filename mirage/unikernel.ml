@@ -430,7 +430,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `Internal_server_error -> Fmt.string ppf "Internal server error"
 
     let error : type reqd headers request response ro wo.
-    let error : type reqd headers request response ro wo.
         Ipaddr.t * int ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         ?request:request ->
@@ -603,7 +602,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Some
                (`Content
                   ( Dashboard.dashboard_layout
-                      ~content:Configuration.configuration_page (),
+                      ~content:
+                        (Configuration.configuration_page t.configuration)
+                      (),
                     None )))
       | `POST (content_type_header, data), "/blocklist/add" ->
           authenticate_user ~auth_password ~system_password
@@ -660,8 +661,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Some (`Redirect ("/blocklist", Some `Update))
       | _ -> None
 
-    let request :
-        type reqd headers request response ro wo.
+    let request : type reqd headers request response ro wo.
+        _ ->
         _ ->
         _ ->
         HTTP.TLS.flow ->
