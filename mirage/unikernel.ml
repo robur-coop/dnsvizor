@@ -765,7 +765,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                          access this\", charset=\"UTF-8\"" );
                     ]
                   in
-                  reply ?content_type reqd ~headers ~status:`Unauthorized ""
+                  reply ?content_type reqd ~headers ~status:`Unauthorized
+                    content
               | Ok (Some (`Redirect (location, action)), _) -> (
                   let headers = H1.Headers.of_list [ ("location", location) ] in
                   let resp = H1.Response.create ~headers `See_other in
@@ -891,7 +892,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                          access this.\", charset=\"UTF-8\"" );
                     ]
                   in
-                  reply ?content_type reqd ~headers ~status:`Unauthorized ""
+                  reply ?content_type reqd ~headers ~status:`Unauthorized
+                    content
               | Ok (Some (`Redirect (location, action)), _) -> (
                   let headers = H2.Headers.of_list [ ("location", location) ] in
                   let resp = H2.Response.create ~headers `See_other in
