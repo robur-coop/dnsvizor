@@ -643,8 +643,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       match protocol with
       | Alpn.HTTP_1_1 (module Reqd) ->
           Lwt.async (fun () ->
-              let reply ?(content_type = "text/html") reqd ?(headers = []) data
-                  =
+              let reply ?(content_type = "text/html") reqd ?(headers = [])
+                  ?(status = `OK) data =
                 let headers =
                   H1.Headers.of_list
                     ([
@@ -653,7 +653,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                      ]
                     @ headers)
                 in
-                let resp = H1.Response.create ~headers `OK in
+                let resp = H1.Response.create ~headers status in
                 Reqd.respond_with_string reqd resp data;
                 Lwt.return_unit
               in
@@ -700,6 +700,15 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               >>= function
               | Ok (Some (`Content (content, content_type)), _) ->
                   reply ?content_type reqd content
+              | Ok (Some (`Authenticate (content, content_type)), _) ->
+                  let headers =
+                    [
+                      ( "www-authenticate",
+                        "Basic realm=\"DNSvizor wants you to authenticate to \
+                         access this\", charset=\"UTF-8\"" );
+                    ]
+                  in
+                  reply ?content_type reqd ~headers ~status:`Unauthorized ""
               | Ok (Some (`Redirect (location, action)), _) -> (
                   let headers = H1.Headers.of_list [ ("location", location) ] in
                   let resp = H1.Response.create ~headers `See_other in
@@ -735,7 +744,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   Reqd.respond_with_string reqd resp "";
                   Lwt.return_unit)
       | Alpn.H2 (module Reqd) ->
-          let reply ?(content_type = "text/html") reqd ?(headers = []) data =
+          let reply ?(content_type = "text/html") reqd ?(headers = [])
+              ?(status = `OK) data =
             let headers =
               H2.Headers.of_list
                 ([
@@ -744,7 +754,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                  ]
                 @ headers)
             in
-            let resp = H2.Response.create ~headers `OK in
+            let resp = H2.Response.create ~headers status in
             Reqd.respond_with_string reqd resp data
           in
           Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
@@ -786,11 +796,20 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               r
               >|= Result.map (fun meth ->
                       ( web_ui_handler t resolver js_file password meth
-                          request.H2.Request.target,
+                          request.H2.Request.target auth_password,
                         meth ))
               >|= function
               | Ok (Some (`Content (content, content_type)), _) ->
                   reply ?content_type reqd content
+              | Ok (Some (`Authenticate (content, content_type)), _) ->
+                  let headers =
+                    [
+                      ( "www-authenticate",
+                        "Basic realm=\"DNSvizor wants you to authenticate to \
+                         access this.\", charset=\"UTF-8\"" );
+                    ]
+                  in
+                  reply ?content_type reqd ~headers ~status:`Unauthorized ""
               | Ok (Some (`Redirect (location, action)), _) -> (
                   let headers = H2.Headers.of_list [ ("location", location) ] in
                   let resp = H2.Response.create ~headers `See_other in
