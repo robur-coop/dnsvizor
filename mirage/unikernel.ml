@@ -468,26 +468,30 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       go (Map.empty, []) m
 
-    let authenticate_user ~auth_password ~system_password () =
+    let authenticate_user ~auth_password ~system_password content =
       match (auth_password, system_password) with
       | Some http_password, Some sys_password ->
-          if String.equal http_password sys_password then Ok ()
+          if String.equal http_password sys_password then content
           else (
             Logs.warn (fun m ->
                 m
                   "password-auth: Passwords do not match, authentication \
                    failed.");
-            Error (`Msg "Wrong password provided."))
+            Some (`Authenticate ("Passwords do not match", None)))
       | None, _ ->
           (* No password provided in the request *)
           Logs.err (fun m -> m "password-auth: No password in http request");
-          Error (`Msg "User didn't input a password")
+          Some (`Authenticate ("User didn't provide a password", None))
       | _, None ->
           (* The unikernel should be started with
              a password set via the command line argument. *)
           Logs.err (fun m ->
               m "password-auth: System password not set in unikernel.");
-          Error (`Msg "Password not set via unikernel command line argument.")
+          Some
+            (`Authenticate
+               ( "Restart DNSvizor with a password passed via command line \
+                  arguments",
+                 None ))
 
     let web_ui_handler t resolver js_file system_password req_method path
         auth_password =
@@ -587,97 +591,71 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (`Content
                ( Dashboard.dashboard_layout ~content:Query_logs.query_page (),
                  None ))
-      | `GET, "/blocklist" -> (
-          match authenticate_user ~auth_password ~system_password () with
-          | Error (`Msg e) ->
-              Logs.err (fun m -> m "Authentication failed: %s" e);
-              Some
-                (`Authenticate ("Please enter your username and password", None))
-          | Ok () ->
-              Logs.info (fun m -> m "User authenticated successfully");
-              let content =
-                Blocklist.block_page
-                  (Blocklist.blocked_domains (Resolver.primary_data resolver))
-              in
-              Some (`Content (Dashboard.dashboard_layout ~content (), None)))
-      | `GET, "/configuration" -> (
-          match authenticate_user ~auth_password ~system_password () with
-          | Error (`Msg e) ->
-              Logs.err (fun m -> m "Authentication failed: %s" e);
-              Some
-                (`Authenticate ("Please enter your username and password", None))
-          | Ok () ->
-              Some
-                (`Content
-                   ( Dashboard.dashboard_layout
-                       ~content:Configuration.configuration_page (),
-                     None )))
-      | `POST (content_type_header, data), "/blocklist/add" -> (
-          match authenticate_user ~auth_password ~system_password () with
-          | Error (`Msg e) ->
-              Logs.err (fun m -> m "Authentication failed: %s" e);
-              Some
-                (`Authenticate ("Please enter your username and password", None))
-          | Ok () -> (
-              match get_multipart_body content_type_header data "domain" with
-              | Ok domain -> (
-                  match Domain_name.of_string domain with
-                  | Error (`Msg e) ->
-                      Logs.debug (fun m ->
-                          m "client wanted to add a bad domain: %s" e);
-                      Some (`Bad_request ("/blocklist", None))
-                  | Ok domain ->
-                      let trie = Resolver.primary_data resolver in
-                      let trie =
-                        Dns_trie.insert domain Dns.Rr_map.Soa
-                          (Blocklist.soa "web-ui" 0l)
-                          trie
-                      in
-                      Resolver.update_primary_data resolver trie;
-                      Some (`Redirect ("/blocklist", None)))
-              | Error (`Msg e) ->
-                  Logs.err (fun m -> m "multipart-form error: %s" e);
-                  Some (`Bad_request ("/blocklist", None))))
-      | `POST (content_type_header, data), "/configuration/upload" -> (
-          match authenticate_user ~auth_password ~system_password () with
-          | Error (`Msg e) ->
-              Logs.err (fun m -> m "Authentication failed: %s" e);
-              Some
-                (`Authenticate ("Please enter your username and password", None))
-          | Ok () -> (
-              match
-                get_multipart_body content_type_header data "dnsmasq_config"
-              with
-              | Ok config_data -> (
-                  match Dnsvizor.Config_parser.parse_file config_data with
-                  | Ok _parsed_dnsmasq_config ->
-                      (*TODO: handle configuration file properly*)
-                      Logs.info (fun m -> m "Dnsmasq config parsed correctly");
-                      None
-                  | Error (`Msg err) ->
-                      Logs.err (fun m ->
-                          m "Error parsing dnsmasq configuration: %s" err);
-                      Some (`Bad_request ("/configuration", None)))
-              | Error (`Msg e) ->
-                  Logs.err (fun m -> m "multipart-form error: %s" e);
-                  Some (`Bad_request ("/configuration", None))))
-      | `POST _, s when String.starts_with s ~prefix:"/blocklist/delete/" -> (
-          match authenticate_user ~auth_password ~system_password () with
-          | Error (`Msg e) ->
-              Logs.err (fun m -> m "Authentication failed: %s" e);
-              Some
-                (`Authenticate ("Please enter your username and password", None))
-          | Ok () -> (
-              (* NOTE: here we don't need the body because we embed in the path *)
-              let off = String.length "/blocklist/delete/" in
-              let domain = String.sub s off (String.length s - off) in
-              match Domain_name.of_string domain with
-              | Error _ -> None
-              | Ok domain ->
-                  let trie = Resolver.primary_data resolver in
-                  let trie = Dns_trie.remove_all domain trie in
-                  Resolver.update_primary_data resolver trie;
-                  Some (`Redirect ("/blocklist", None))))
+      | `GET, "/blocklist" ->
+          let content =
+            Blocklist.block_page
+              (Blocklist.blocked_domains (Resolver.primary_data resolver))
+          in
+          authenticate_user ~auth_password ~system_password
+            (Some (`Content (Dashboard.dashboard_layout ~content (), None)))
+      | `GET, "/configuration" ->
+          authenticate_user ~auth_password ~system_password
+            (Some
+               (`Content
+                  ( Dashboard.dashboard_layout
+                      ~content:Configuration.configuration_page (),
+                    None )))
+      | `POST (content_type_header, data), "/blocklist/add" ->
+          authenticate_user ~auth_password ~system_password
+            (match get_multipart_body content_type_header data "domain" with
+            | Ok domain -> (
+                match Domain_name.of_string domain with
+                | Error (`Msg e) ->
+                    Logs.debug (fun m ->
+                        m "client wanted to add a bad domain: %s" e);
+                    Some (`Bad_request ("/blocklist", None))
+                | Ok domain ->
+                    let trie = Resolver.primary_data resolver in
+                    let trie =
+                      Dns_trie.insert domain Dns.Rr_map.Soa
+                        (Blocklist.soa "web-ui" 0l)
+                        trie
+                    in
+                    Resolver.update_primary_data resolver trie;
+                    Some (`Redirect ("/blocklist", None)))
+            | Error (`Msg e) ->
+                Logs.err (fun m -> m "multipart-form error: %s" e);
+                Some (`Bad_request ("/blocklist", None)))
+      | `POST (content_type_header, data), "/configuration/upload" ->
+          authenticate_user ~auth_password ~system_password
+            (match
+               get_multipart_body content_type_header data "dnsmasq_config"
+             with
+            | Ok config_data -> (
+                match Dnsvizor.Config_parser.parse_file config_data with
+                | Ok _parsed_dnsmasq_config ->
+                    (*TODO: handle configuration file properly*)
+                    Logs.info (fun m -> m "Dnsmasq config parsed correctly");
+                    None
+                | Error (`Msg err) ->
+                    Logs.err (fun m ->
+                        m "Error parsing dnsmasq configuration: %s" err);
+                    Some (`Bad_request ("/configuration", None)))
+            | Error (`Msg e) ->
+                Logs.err (fun m -> m "multipart-form error: %s" e);
+                Some (`Bad_request ("/configuration", None)))
+      | `POST _, s when String.starts_with s ~prefix:"/blocklist/delete/" ->
+          authenticate_user ~auth_password ~system_password
+            ((* NOTE: here we don't need the body because we embed in the path *)
+             let off = String.length "/blocklist/delete/" in
+             let domain = String.sub s off (String.length s - off) in
+             match Domain_name.of_string domain with
+             | Error _ -> None
+             | Ok domain ->
+                 let trie = Resolver.primary_data resolver in
+                 let trie = Dns_trie.remove_all domain trie in
+                 Resolver.update_primary_data resolver trie;
+                 Some (`Redirect ("/blocklist", None)))
       | `POST _, "/blocklist/update" ->
           Some (`Redirect ("/blocklist", Some `Update))
       | _ -> None
