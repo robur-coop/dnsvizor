@@ -235,7 +235,8 @@ module K = struct
     Mirage_runtime.register_arg arg
 end
 
-module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
+module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) (BLOCK : Mirage_block.S) =
+struct
   type t = {
     mac : Macaddr.t;
     mutable configuration : string;
@@ -417,6 +418,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module Mimic_he = Mimic_happy_eyeballs.Make (S) (HE) (Dns_client)
   module Http_client = Http_mirage_client.Make (TCP) (Mimic_he)
   module Map = Map.Make (String)
+  module Store = Storage.Make (BLOCK)
 
   module Daemon = struct
     let pp_error ppf = function
@@ -980,7 +982,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       Lwt.join [ th; go (cert, dns_tls, tls) resolver mvar ]
   end
 
-  let start net assets =
+  let start net assets block =
     let t = of_commandline (N.mac net) () in
     let net = Net.connect net t in
     ETH.connect net >>= fun eth ->
@@ -1042,33 +1044,39 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       Dns_server.Primary.create ~rng:Mirage_crypto_rng.generate trie
     in
     js_file assets >>= fun js_file ->
-    (match K.dns_upstream () with
-    | None ->
-        Logs.info (fun m -> m "using a recursive resolver");
-        let resolver =
-          let features =
-            (if K.dnssec () then [ `Dnssec ] else [])
-            @ (if K.qname_minimisation () then [ `Qname_minimisation ] else [])
-            @
-            if K.opportunistic_tls () then [ `Opportunistic_tls_authoritative ]
-            else []
-          in
-          Dns_resolver.create ?cache_size:(K.dns_cache ()) features
-            (Mirage_mtime.elapsed_ns ())
-            Mirage_crypto_rng.generate primary_t
-        in
-        Lwt.async (fun () ->
-            Daemon.start_resolver t stack tcp resolver http_client js_file);
-        Lwt.return_unit
-    | Some ns -> (
-        Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
-        Stub.H.connect_device stack >>= fun happy_eyeballs ->
-        try
-          Stub.create ?cache_size:(K.dns_cache ()) ~nameservers:[ ns ] primary_t
-            ~happy_eyeballs stack
-          >|= fun _ -> ()
-        with Invalid_argument a ->
-          Logs.err (fun m -> m "error %s" a);
-          exit Mirage_runtime.argument_error))
-    >>= fun () -> S.listen stack
+    Store.connect block >>= function
+    | Error (`Msg msg) -> failwith msg
+    | Ok store ->
+        (match K.dns_upstream () with
+        | None ->
+            Logs.info (fun m -> m "using a recursive resolver");
+            let resolver =
+              let features =
+                (if K.dnssec () then [ `Dnssec ] else [])
+                @ (if K.qname_minimisation () then [ `Qname_minimisation ]
+                   else [])
+                @
+                if K.opportunistic_tls () then
+                  [ `Opportunistic_tls_authoritative ]
+                else []
+              in
+              Dns_resolver.create ?cache_size:(K.dns_cache ()) features
+                (Mirage_mtime.elapsed_ns ())
+                Mirage_crypto_rng.generate primary_t
+            in
+
+            Lwt.async (fun () ->
+                Daemon.start_resolver t stack tcp resolver http_client js_file);
+            Lwt.return_unit
+        | Some ns -> (
+            Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
+            Stub.H.connect_device stack >>= fun happy_eyeballs ->
+            try
+              Stub.create ?cache_size:(K.dns_cache ()) ~nameservers:[ ns ]
+                primary_t ~happy_eyeballs stack
+              >|= fun _ -> ()
+            with Invalid_argument a ->
+              Logs.err (fun m -> m "error %s" a);
+              exit Mirage_runtime.argument_error))
+        >>= fun () -> S.listen stack
 end
