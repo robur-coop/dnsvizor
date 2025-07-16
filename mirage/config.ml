@@ -36,9 +36,12 @@ let dnsvizor =
       package "http-mirage-client";
       package "angstrom";
       package "multipart_form";
+      package "oneffs";
     ]
   in
-  main ~packages "Unikernel.Main" (network @-> kv_ro @-> job)
+  main ~packages "Unikernel.Main" (network @-> kv_ro @-> block @-> job)
+
+let block = block_of_file "data"
 
 (* this works around the [default_network] on Unix brings a --interface runtime
    argument that collides with dnsmasq arguments *)
@@ -115,5 +118,5 @@ let () =
     [
       optional_syslog management_stack;
       optional_monitoring management_stack;
-      dnsvizor $ mynetwork $ assets;
+      dnsvizor $ mynetwork $ assets $ block;
     ]
