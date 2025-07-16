@@ -1064,11 +1064,9 @@ struct
                 (Mirage_mtime.elapsed_ns ())
                 Mirage_crypto_rng.generate primary_t
             in
-            let password = K.password () in
 
             Lwt.async (fun () ->
-                Daemon.start_resolver t stack tcp resolver http_client js_file
-                  password);
+                Daemon.start_resolver t stack tcp resolver http_client js_file);
             Lwt.return_unit
         | Some ns -> (
             Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
