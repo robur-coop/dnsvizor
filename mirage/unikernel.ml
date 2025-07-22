@@ -221,7 +221,7 @@ module K = struct
 
   let password =
     let doc = Arg.info ~doc:"Password used for authentication" [ "password" ] in
-    Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
+    Mirage_runtime.register_arg Arg.(required & opt (some string) None doc)
 
   let name =
     let ( let* ) = Result.bind in
@@ -468,29 +468,19 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       go (Map.empty, []) m
 
     let authenticate_user ~auth_password ~system_password content =
-      match (auth_password, system_password) with
-      | Some http_password, Some sys_password ->
-          if String.equal http_password sys_password then content
+      match auth_password with
+      | Some http_password ->
+          if String.equal http_password system_password then content
           else (
             Logs.warn (fun m ->
                 m
                   "password-auth: Passwords do not match, authentication \
                    failed.");
             Some (`Authenticate ("Passwords do not match", None)))
-      | None, _ ->
+      | None ->
           (* No password provided in the request *)
           Logs.err (fun m -> m "password-auth: No password in http request");
           Some (`Authenticate ("User didn't provide a password", None))
-      | _, None ->
-          (* The unikernel should be started with
-             a password set via the command line argument. *)
-          Logs.err (fun m ->
-              m "password-auth: System password not set in unikernel.");
-          Some
-            (`Authenticate
-               ( "Restart DNSvizor with a password passed via command line \
-                  arguments",
-                 None ))
 
     let web_ui_handler t resolver js_file system_password req_method path
         auth_password =
@@ -661,6 +651,36 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Some (`Redirect ("/blocklist", Some `Update))
       | _ -> None
 
+    let authenticate_header =
+      ( "www-authenticate",
+        "Basic realm=\"DNSvizor wants you to authenticate to access this (use \
+         any username)\", charset=\"UTF-8\"" )
+
+    let extract_password = function
+      | Some header when String.length header >= 5 -> (
+          match
+            Base64.decode
+              (String.trim (String.sub header 5 (String.length header - 5)))
+            (*remove basic prefix and decode*)
+          with
+          | Ok decoded -> (
+              let parts = String.split_on_char ':' decoded in
+              match parts with
+              | [ password ] -> Some password
+              | _username :: password -> Some (String.concat ":" password)
+              | _ ->
+                  Logs.warn (fun m ->
+                      m "password-auth: Bad authorization header");
+                  None)
+          | Error _ ->
+              Logs.warn (fun m ->
+                  m "password-auth: Bad base64 encoding in header");
+              None)
+      | Some _ ->
+          Logs.warn (fun m -> m "password-auth: Authorization header too short");
+          None
+      | None -> None
+
     let request : type reqd headers request response ro wo.
         _ ->
         _ ->
@@ -670,7 +690,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         reqd ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         string ->
-        string option ->
+        string ->
         unit =
      fun t resolver mvar _flow (dst, port) reqd protocol js_file password ->
       match protocol with
@@ -693,28 +713,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               Logs.info (fun m -> m "Got a new HTTPS request!");
               let request = Reqd.request reqd in
               let auth_password =
-                match H1.Headers.get request.headers "Authorization" with
-                | Some header -> (
-                    match
-                      Base64.decode
-                        (String.trim
-                           (String.sub header 5 (String.length header - 5)))
-                      (*remove basic prefix and decode*)
-                    with
-                    | Ok decoded -> (
-                        let parts = String.split_on_char ':' decoded in
-                        match parts with
-                        | [ password ] -> Some password
-                        | [ _username; password ] -> Some password
-                        | _ ->
-                            Logs.warn (fun m ->
-                                m "password-auth: Bad authorization header");
-                            None)
-                    | Error _ ->
-                        Logs.warn (fun m ->
-                            m "password-auth: Bad base64 encoding in header");
-                        None)
-                | None -> None
+                extract_password
+                  (H1.Headers.get request.headers "Authorization")
               in
               Logs.info (fun m ->
                   m "%a %s" H1.Method.pp_hum request.H1.Request.meth
@@ -758,13 +758,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               | Ok (Some (`Content (content, content_type)), _) ->
                   reply ?content_type reqd content
               | Ok (Some (`Authenticate (content, content_type)), _) ->
-                  let headers =
-                    [
-                      ( "www-authenticate",
-                        "Basic realm=\"DNSvizor wants you to authenticate to \
-                         access this\", charset=\"UTF-8\"" );
-                    ]
-                  in
+                  let headers = [ authenticate_header ] in
                   reply ?content_type reqd ~headers ~status:`Unauthorized
                     content
               | Ok (Some (`Redirect (location, action)), _) -> (
@@ -818,29 +812,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
           let request = Reqd.request reqd in
           let auth_password =
-            match H2.Headers.get request.headers "authorization" with
-            | Some header -> (
-                match
-                  Base64.decode
-                    (String.trim
-                       (String.sub header 5 (String.length header - 5)))
-                  (*remove basic prefix and decode*)
-                with
-                | Ok decoded -> (
-                    let parts = String.split_on_char ':' decoded in
-                    match parts with
-                    | [ password ] -> Some password
-                    | [ _username; password ] -> Some password
-                    | _ ->
-                        Logs.warn (fun m ->
-                            m "password-auth: Bad authorization header");
-                        None)
-                | Error (`Msg err) ->
-                    Logs.warn (fun m ->
-                        m "password-auth: Base64 decoding failed with error: %s"
-                          err);
-                    None)
-            | None -> None
+            extract_password (H2.Headers.get request.headers "authorization")
           in
           Logs.info (fun m ->
               m "%a %s" H2.Method.pp_hum request.H2.Request.meth
@@ -885,13 +857,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               | Ok (Some (`Content (content, content_type)), _) ->
                   reply ?content_type reqd content
               | Ok (Some (`Authenticate (content, content_type)), _) ->
-                  let headers =
-                    [
-                      ( "www-authenticate",
-                        "Basic realm=\"DNSvizor wants you to authenticate to \
-                         access this.\", charset=\"UTF-8\"" );
-                    ]
-                  in
+                  let headers = [ authenticate_header ] in
                   reply ?content_type reqd ~headers ~status:`Unauthorized
                     content
               | Ok (Some (`Redirect (location, action)), _) -> (
