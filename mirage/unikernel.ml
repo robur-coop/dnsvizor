@@ -219,6 +219,10 @@ module K = struct
     in
     Mirage_runtime.register_arg arg
 
+  let password =
+    let doc = Arg.info ~doc:"Password used for authentication" [ "password" ] in
+    Mirage_runtime.register_arg Arg.(required & opt (some string) None doc)
+
   let name =
     let ( let* ) = Result.bind in
     let parser str =
@@ -463,7 +467,23 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       go (Map.empty, []) m
 
-    let web_ui_handler t resolver js_file req_method path =
+    let authenticate_user ~auth_password ~system_password content =
+      match auth_password with
+      | Some http_password ->
+          if String.equal http_password system_password then content
+          else (
+            Logs.warn (fun m ->
+                m
+                  "password-auth: Passwords do not match, authentication \
+                   failed.");
+            Some (`Authenticate ("Passwords do not match", None)))
+      | None ->
+          (* No password provided in the request *)
+          Logs.err (fun m -> m "password-auth: No password in http request");
+          Some (`Authenticate ("User didn't provide a password", None))
+
+    let web_ui_handler t resolver js_file system_password req_method path
+        auth_password =
       let get_multipart_body content_type_header data field =
         let content_type =
           Option.fold ~none:"application/x-www-form-urlencoded\r\n"
@@ -565,64 +585,101 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Blocklist.block_page
               (Blocklist.blocked_domains (Resolver.primary_data resolver))
           in
-          Some (`Content (Dashboard.dashboard_layout ~content (), None))
+          authenticate_user ~auth_password ~system_password
+            (Some (`Content (Dashboard.dashboard_layout ~content (), None)))
       | `GET, "/configuration" ->
-          Some
-            (`Content
-               ( Dashboard.dashboard_layout
-                   ~content:(Configuration.configuration_page t.configuration)
-                   (),
-                 None ))
-      | `POST (content_type_header, data), "/blocklist/add" -> (
-          match get_multipart_body content_type_header data "domain" with
-          | Ok domain -> (
-              match Domain_name.of_string domain with
-              | Error (`Msg e) ->
-                  Logs.debug (fun m ->
-                      m "client wanted to add a bad domain: %s" e);
-                  Some (`Bad_request ("/blocklist", None))
-              | Ok domain ->
-                  let trie = Resolver.primary_data resolver in
-                  let trie =
-                    Dns_trie.insert domain Dns.Rr_map.Soa
-                      (Blocklist.soa "web-ui" 0l)
-                      trie
-                  in
-                  Resolver.update_primary_data resolver trie;
-                  Some (`Redirect ("/blocklist", None)))
-          | Error (`Msg e) ->
-              Logs.err (fun m -> m "multipart-form error: %s" e);
-              Some (`Bad_request ("/blocklist", None)))
-      | `POST (content_type_header, data), "/configuration/upload" -> (
-          match
-            get_multipart_body content_type_header data "dnsmasq_config"
-          with
-          | Ok config_data -> (
-              match Dnsvizor.Config_parser.parse_file config_data with
-              | Ok parsed_config ->
-                  update_configuration t config_data parsed_config;
-                  Some (`Redirect ("/configuration", None))
-              | Error (`Msg err) ->
-                  Logs.err (fun m ->
-                      m "Error parsing dnsmasq configuration: %s" err);
-                  Some (`Bad_request ("/configuration", None)))
-          | Error (`Msg e) ->
-              Logs.err (fun m -> m "multipart-form error: %s" e);
-              Some (`Bad_request ("/configuration", None)))
-      | `POST _, s when String.starts_with s ~prefix:"/blocklist/delete/" -> (
-          (* NOTE: here we don't need the body because we embed in the path *)
-          let off = String.length "/blocklist/delete/" in
-          let domain = String.sub s off (String.length s - off) in
-          match Domain_name.of_string domain with
-          | Error _ -> None
-          | Ok domain ->
-              let trie = Resolver.primary_data resolver in
-              let trie = Dns_trie.remove_all domain trie in
-              Resolver.update_primary_data resolver trie;
-              Some (`Redirect ("/blocklist", None)))
+          authenticate_user ~auth_password ~system_password
+            (Some
+               (`Content
+                  ( Dashboard.dashboard_layout
+                      ~content:
+                        (Configuration.configuration_page t.configuration)
+                      (),
+                    None )))
+      | `POST (content_type_header, data), "/blocklist/add" ->
+          authenticate_user ~auth_password ~system_password
+            (match get_multipart_body content_type_header data "domain" with
+            | Ok domain -> (
+                match Domain_name.of_string domain with
+                | Error (`Msg e) ->
+                    Logs.debug (fun m ->
+                        m "client wanted to add a bad domain: %s" e);
+                    Some (`Bad_request ("/blocklist", None))
+                | Ok domain ->
+                    let trie = Resolver.primary_data resolver in
+                    let trie =
+                      Dns_trie.insert domain Dns.Rr_map.Soa
+                        (Blocklist.soa "web-ui" 0l)
+                        trie
+                    in
+                    Resolver.update_primary_data resolver trie;
+                    Some (`Redirect ("/blocklist", None)))
+            | Error (`Msg e) ->
+                Logs.err (fun m -> m "multipart-form error: %s" e);
+                Some (`Bad_request ("/blocklist", None)))
+      | `POST (content_type_header, data), "/configuration/upload" ->
+          authenticate_user ~auth_password ~system_password
+            (match
+               get_multipart_body content_type_header data "dnsmasq_config"
+             with
+            | Ok config_data -> (
+                match Dnsvizor.Config_parser.parse_file config_data with
+                | Ok _parsed_dnsmasq_config ->
+                    (*TODO: handle configuration file properly*)
+                    Logs.info (fun m -> m "Dnsmasq config parsed correctly");
+                    None
+                | Error (`Msg err) ->
+                    Logs.err (fun m ->
+                        m "Error parsing dnsmasq configuration: %s" err);
+                    Some (`Bad_request ("/configuration", None)))
+            | Error (`Msg e) ->
+                Logs.err (fun m -> m "multipart-form error: %s" e);
+                Some (`Bad_request ("/configuration", None)))
+      | `POST _, s when String.starts_with s ~prefix:"/blocklist/delete/" ->
+          authenticate_user ~auth_password ~system_password
+            ((* NOTE: here we don't need the body because we embed in the path *)
+             let off = String.length "/blocklist/delete/" in
+             let domain = String.sub s off (String.length s - off) in
+             match Domain_name.of_string domain with
+             | Error _ -> None
+             | Ok domain ->
+                 let trie = Resolver.primary_data resolver in
+                 let trie = Dns_trie.remove_all domain trie in
+                 Resolver.update_primary_data resolver trie;
+                 Some (`Redirect ("/blocklist", None)))
       | `POST _, "/blocklist/update" ->
           Some (`Redirect ("/blocklist", Some `Update))
       | _ -> None
+
+    let authenticate_header =
+      ( "www-authenticate",
+        "Basic realm=\"DNSvizor wants you to authenticate to access this (use \
+         any username)\", charset=\"UTF-8\"" )
+
+    let extract_password = function
+      | Some header when String.length header >= 5 -> (
+          match
+            Base64.decode
+              (String.trim (String.sub header 5 (String.length header - 5)))
+            (*remove basic prefix and decode*)
+          with
+          | Ok decoded -> (
+              let parts = String.split_on_char ':' decoded in
+              match parts with
+              | [ password ] -> Some password
+              | _username :: password -> Some (String.concat ":" password)
+              | _ ->
+                  Logs.warn (fun m ->
+                      m "password-auth: Bad authorization header");
+                  None)
+          | Error _ ->
+              Logs.warn (fun m ->
+                  m "password-auth: Bad base64 encoding in header");
+              None)
+      | Some _ ->
+          Logs.warn (fun m -> m "password-auth: Authorization header too short");
+          None
+      | None -> None
 
     let request : type reqd headers request response ro wo.
         _ ->
@@ -633,27 +690,32 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         reqd ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         string ->
+        string ->
         unit =
-     fun t resolver mvar _flow (dst, port) reqd protocol js_file ->
+     fun t resolver mvar _flow (dst, port) reqd protocol js_file password ->
       match protocol with
       | Alpn.HTTP_1_1 (module Reqd) ->
           Lwt.async (fun () ->
-              let reply ?(content_type = "text/html") reqd ?(headers = []) data
-                  =
+              let reply ?(content_type = "text/html") reqd ?(headers = [])
+                  ?(status = `OK) data =
                 let headers =
                   H1.Headers.of_list
                     ([
                        ("content-type", content_type);
-                       ("content-legnth", string_of_int (String.length data));
+                       ("content-length", string_of_int (String.length data));
                      ]
                     @ headers)
                 in
-                let resp = H1.Response.create ~headers `OK in
+                let resp = H1.Response.create ~headers status in
                 Reqd.respond_with_string reqd resp data;
                 Lwt.return_unit
               in
               Logs.info (fun m -> m "Got a new HTTPS request!");
               let request = Reqd.request reqd in
+              let auth_password =
+                extract_password
+                  (H1.Headers.get request.headers "Authorization")
+              in
               Logs.info (fun m ->
                   m "%a %s" H1.Method.pp_hum request.H1.Request.meth
                     request.H1.Request.target);
@@ -689,12 +751,16 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler t resolver js_file meth
-                          request.H1.Request.target,
+                      ( web_ui_handler t resolver js_file password meth
+                          request.H1.Request.target auth_password,
                         meth ))
               >>= function
               | Ok (Some (`Content (content, content_type)), _) ->
                   reply ?content_type reqd content
+              | Ok (Some (`Authenticate (content, content_type)), _) ->
+                  let headers = [ authenticate_header ] in
+                  reply ?content_type reqd ~headers ~status:`Unauthorized
+                    content
               | Ok (Some (`Redirect (location, action)), _) -> (
                   let headers = H1.Headers.of_list [ ("location", location) ] in
                   let resp = H1.Response.create ~headers `See_other in
@@ -730,7 +796,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   Reqd.respond_with_string reqd resp "";
                   Lwt.return_unit)
       | Alpn.H2 (module Reqd) ->
-          let reply ?(content_type = "text/html") reqd ?(headers = []) data =
+          let reply ?(content_type = "text/html") reqd ?(headers = [])
+              ?(status = `OK) data =
             let headers =
               H2.Headers.of_list
                 ([
@@ -739,11 +806,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                  ]
                 @ headers)
             in
-            let resp = H2.Response.create ~headers `OK in
+            let resp = H2.Response.create ~headers status in
             Reqd.respond_with_string reqd resp data
           in
           Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
           let request = Reqd.request reqd in
+          let auth_password =
+            extract_password (H2.Headers.get request.headers "authorization")
+          in
           Logs.info (fun m ->
               m "%a %s" H2.Method.pp_hum request.H2.Request.meth
                 request.H2.Request.target);
@@ -780,12 +850,16 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt.async (fun () ->
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler t resolver js_file meth
-                          request.H2.Request.target,
+                      ( web_ui_handler t resolver js_file password meth
+                          request.H2.Request.target auth_password,
                         meth ))
               >|= function
               | Ok (Some (`Content (content, content_type)), _) ->
                   reply ?content_type reqd content
+              | Ok (Some (`Authenticate (content, content_type)), _) ->
+                  let headers = [ authenticate_header ] in
+                  reply ?content_type reqd ~headers ~status:`Unauthorized
+                    content
               | Ok (Some (`Redirect (location, action)), _) -> (
                   let headers = H2.Headers.of_list [ ("location", location) ] in
                   let resp = H2.Response.create ~headers `See_other in
@@ -853,12 +927,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   let resp = H2.Response.create ~headers status in
                   Reqd.respond_with_string reqd resp "")
 
-    let handler t resolver mvar js_file =
+    let handler t resolver mvar js_file password =
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request t resolver mvar flow dst reqd protocol js_file);
+            request t resolver mvar flow dst reqd protocol js_file password);
       }
 
     let update_blocklist http_client resolver =
@@ -939,7 +1013,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       (mvar, loop (K.dns_blocklist ()) [] (one_week ()))
 
-    let start_resolver t stack tcp resolver http_client js_file =
+    let start_resolver t stack tcp resolver http_client js_file password =
       let fresh_tls () =
         let ca = CA.make (K.name ()) (K.ca_key ()) in
         let cert, pk = Result.get_ok ca in
@@ -967,7 +1041,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt_switch.turn_off stop
         in
         Resolver.update_tls resolver dns_tls;
-        let h2 = HTTP.alpn_service ~tls (handler t resolver mvar js_file) in
+        let h2 =
+          HTTP.alpn_service ~tls (handler t resolver mvar js_file password)
+        in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         (* Due to the Lwt_switch [stop] [bell] will shut down the web server so
@@ -1057,8 +1133,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
+        let password = K.password () in
+
         Lwt.async (fun () ->
-            Daemon.start_resolver t stack tcp resolver http_client js_file);
+            Daemon.start_resolver t stack tcp resolver http_client js_file
+              password);
         Lwt.return_unit
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
