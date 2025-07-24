@@ -423,9 +423,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module Map = Map.Make (String)
 
   let lookup_src_by_name name =
-     List.find_opt
-       (fun src -> Metrics.Src.name src = name)
-       (Metrics.Src.list ())
+    List.find_opt (fun src -> Metrics.Src.name src = name) (Metrics.Src.list ())
 
   module Daemon = struct
     let pp_error ppf = function
@@ -1099,9 +1097,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let reporter = Metrics.cache_reporter () in
     Metrics.set_reporter reporter;
     Metrics_lwt.init_periodic (fun () -> Mirage_sleep.ns (Duration.of_sec 10));
-    let used_metrics = [ "dns-resolver" ; "dns-cache" ; "dns-resolver-timings" ; "memory" ; "gc" ] in
-    List.iter (fun src_name ->
-      match lookup_src_by_name src_name with
+    let used_metrics =
+      [ "dns-resolver"; "dns-cache"; "dns-resolver-timings"; "memory"; "gc" ]
+    in
+    List.iter
+      (fun src_name ->
+        match lookup_src_by_name src_name with
         | None -> Logs.warn (fun m -> m "couldn't find metrics src %s" src_name)
         | Some src -> Metrics.Src.enable src)
       used_metrics;
