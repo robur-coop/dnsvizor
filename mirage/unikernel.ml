@@ -422,6 +422,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module Http_client = Http_mirage_client.Make (TCP) (Mimic_he)
   module Map = Map.Make (String)
 
+  let lookup_src_by_name name =
+     List.find_opt
+       (fun src -> Metrics.Src.name src = name)
+       (Metrics.Src.list ())
+
   module Daemon = struct
     let pp_error ppf = function
       | `Bad_gateway -> Fmt.string ppf "Bad gateway"
@@ -511,11 +516,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `GET, "/main.js" -> Some (`Content (js_file, Some "text/javascript"))
       | `GET, "/" | `GET, "/dashboard" ->
           let map = Metrics.get_cache () in
-          let lookup_src_by_name name =
-            List.find_opt
-              (fun src -> Metrics.Src.name src = name)
-              (Metrics.Src.list ())
-          in
           let lookup_stats name =
             match lookup_src_by_name name with
             | None -> []
@@ -1098,8 +1098,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     Http_client.connect ctx >>= fun http_client ->
     let reporter = Metrics.cache_reporter () in
     Metrics.set_reporter reporter;
-    Metrics.enable_all ();
     Metrics_lwt.init_periodic (fun () -> Mirage_sleep.ns (Duration.of_sec 10));
+    let used_metrics = [ "dns-resolver" ; "dns-cache" ; "dns-resolver-timings" ; "memory" ; "gc" ] in
+    List.iter (fun src_name ->
+      match lookup_src_by_name src_name with
+        | None -> Logs.warn (fun m -> m "couldn't find metrics src %s" src_name)
+        | Some src -> Metrics.Src.enable src)
+      used_metrics;
     let primary_t =
       (* setup DNS server state: *)
       let trie =
