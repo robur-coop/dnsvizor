@@ -47,7 +47,7 @@ module K = struct
   open Cmdliner
   open Dnsvizor
 
-  let s_dnsmasq = "Dnsmasq-compatible options"
+  let s_dnsmasq = "DNSMASQ-COMPATIBLE OPTIONS"
 
   let ipv4 =
     Mirage_runtime.register_arg
