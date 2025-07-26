@@ -47,6 +47,8 @@ module K = struct
   open Cmdliner
   open Dnsvizor
 
+  let s_dnsmasq = "DNSMASQ-COMPATIBLE OPTIONS"
+
   let ipv4 =
     Mirage_runtime.register_arg
       (Mirage_runtime_network.V4.network
@@ -102,7 +104,7 @@ module K = struct
   let dhcp_range =
     let doc =
       Arg.info ~doc:"Enable DHCP server." ~docv:Config_parser.dhcp_range_docv
-        [ "dhcp-range" ]
+        ~docs:s_dnsmasq [ "dhcp-range" ]
     in
     Mirage_runtime.register_arg
       Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
@@ -153,7 +155,8 @@ module K = struct
   (* Further configuration options, not ignored *)
   let dnssec =
     let doc =
-      Arg.info ~doc:"Validate DNS replies and cache DNSSEC data." [ "dnssec" ]
+      Arg.info ~doc:"Validate DNS replies and cache DNSSEC data."
+        ~docs:s_dnsmasq [ "dnssec" ]
     in
     Mirage_runtime.register_arg Arg.(value & flag doc)
 
