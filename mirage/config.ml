@@ -7,22 +7,21 @@ let assets = crunch "assets"
 
 let dnsvizor =
   let pin = "git+file://" ^ Filename.dirname (Sys.getcwd ()) ^ "#HEAD" in
-  let dns_pin = "git+https://github.com/mirage/ocaml-dns.git" in
   let packages =
     [
       package ~pin "dnsvizor";
       package "logs";
       package ~min:"0.5.0" "metrics";
       package "dns";
-      package ~pin:dns_pin "dns-client";
-      package ~pin:dns_pin "dns-client-mirage";
-      package ~pin:dns_pin "dnssec";
-      package ~pin:dns_pin "dns-mirage";
-      package ~pin:dns_pin ~min:"10.1.0" ~sublibs:[ "mirage" ] "dns-resolver";
-      package ~pin:dns_pin ~sublibs:[ "mirage" ] "dns-stub";
-      package ~pin:dns_pin "dns-tsig";
-      package ~pin:dns_pin "dns-server";
-      package ~pin:dns_pin "dns";
+      package "dns-client";
+      package "dns-client-mirage";
+      package "dnssec";
+      package "dns-mirage";
+      package ~min:"10.2.0" ~sublibs:[ "mirage" ] "dns-resolver";
+      package ~sublibs:[ "mirage" ] "dns-stub";
+      package "dns-tsig";
+      package "dns-server";
+      package "dns";
       package "paf" ~sublibs:[ "mirage"; "alpn" ];
       package ~min:"3.0.0" "ethernet";
       package ~min:"3.0.0" ~sublibs:[ "mirage" ] "arp";
