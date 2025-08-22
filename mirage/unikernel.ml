@@ -387,7 +387,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               now
           with
           | Dhcp_server.Input.Silence -> Lwt.return_unit
-          | Dhcp_server.Input.Update leases ->
+          | Dhcp_server.Input.Update (_lease_opt, leases) ->
+              (* if lease_opt is present, the lease got removed! *)
               t.configuration.dhcp_leases <- leases;
               Logs.debug (fun m ->
                   m "Received packet %a - updated lease database"
@@ -399,15 +400,27 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           | Dhcp_server.Input.Error e ->
               Logs.err (fun m -> m "%s" e);
               Lwt.return_unit
-          | Dhcp_server.Input.Reply (reply, leases) ->
+          | Dhcp_server.Input.Reply (reply, lease_opt, leases) -> (
               t.configuration.dhcp_leases <- leases;
-              Logs.debug (fun m -> m "Received packet %a" Dhcp_wire.pp_pkt pkt);
+              (match lease_opt with
+              | None -> ()
+              | Some (lease, opts) ->
+                  Logs.info (fun m ->
+                      m
+                        "Handing out lease %s, received options %a@.sending \
+                         reply %a"
+                        (Dhcp_server.Lease.to_string lease)
+                        Fmt.(list ~sep:(any ", ") string)
+                        (List.map Dhcp_wire.dhcp_option_to_string opts)
+                        Dhcp_wire.pp_pkt reply));
               N.write t.net
                 ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet)
                 (Dhcp_wire.pkt_into_buf reply)
-              >|= fun _ ->
-              Logs.debug (fun m ->
-                  m "Sent reply packet %a" Dhcp_wire.pp_pkt reply))
+              >|= function
+              | Ok () -> ()
+              | Error ne ->
+                  Logs.err (fun m -> m "got a network error: %a" N.pp_error ne))
+          )
 
     let listen t ~header_size net =
       let dhcp_or_not buf =
