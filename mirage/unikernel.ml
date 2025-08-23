@@ -153,6 +153,16 @@ module K = struct
     Mirage_runtime.register_arg Arg.(value & flag doc)
 
   (* Further configuration options, not ignored *)
+  let no_hosts =
+    let doc =
+      Arg.info
+        ~doc:
+          "Don't 'read' the (synthesized) /etc/hosts (contains only --name \
+           argument)"
+        [ "no-hosts" ]
+    in
+    Mirage_runtime.register_arg Arg.(value & flag doc)
+
   let dnssec =
     let doc =
       Arg.info ~doc:"Validate DNS replies and cache DNSSEC data."
@@ -235,7 +245,7 @@ module K = struct
     let doc = Arg.info ~doc:"Password used for authentication" [ "password" ] in
     Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 
-  let name =
+  let name_k =
     let ( let* ) = Result.bind in
     let parser str =
       let* dn = Domain_name.of_string str in
@@ -244,24 +254,13 @@ module K = struct
     let pp = Domain_name.pp in
     let domain_name = Arg.conv (parser, pp) in
     let doc = "The name (and the SNI for the certificate) of the unikernel." in
-    let arg =
-      let open Arg in
-      required
-      & opt (some domain_name)
-          (Some Domain_name.(of_string_exn "dnsvizor" |> host_exn))
-      & info [ "name" ] ~doc
-    in
-    Mirage_runtime.register_arg arg
+    let open Arg in
+    required
+    & opt (some domain_name)
+        (Some Domain_name.(of_string_exn "dnsvizor" |> host_exn))
+    & info [ "name" ] ~doc
 
-  let no_hosts =
-    let doc =
-      Arg.info
-        ~doc:
-          "Don't 'read' the (synthesized) /etc/hosts (contains only --name \
-           argument)"
-        [ "no-hosts" ]
-    in
-    Mirage_runtime.register_arg Arg.(value & flag doc)
+  let name = Mirage_runtime.register_arg name_k
 end
 
 module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
