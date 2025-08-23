@@ -240,6 +240,16 @@ module K = struct
       required & opt (some domain_name) None & info [ "name" ] ~doc
     in
     Mirage_runtime.register_arg arg
+
+  let no_hosts =
+    let doc =
+      Arg.info
+        ~doc:
+          "Don't 'read' the (synthesized) /etc/hosts (contains only --name \
+           argument)"
+        [ "no-hosts" ]
+    in
+    Mirage_runtime.register_arg Arg.(value & flag doc)
 end
 
 module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
@@ -1112,12 +1122,30 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let primary_t =
       (* setup DNS server state: *)
       let trie =
-        let ipv4_ttl =
-          (3600l, Ipaddr.V4.Set.singleton (Ipaddr.V4.Prefix.address (K.ipv4 ())))
-        in
-        let soa = Dns.Soa.create (K.name ()) in
-        Dns_trie.insert (K.name ()) Dns.Rr_map.A ipv4_ttl Dns_trie.empty
-        |> Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa
+        if K.no_hosts () then Dns_trie.empty
+        else
+          let ips = S.IP.configured_ips ip in
+          let ipv4s, ipv6s =
+            List.fold_left
+              (fun (ipv4s, ipv6s) ip ->
+                match ip with
+                | Ipaddr.V4 v4 ->
+                    let v4 = Ipaddr.V4.Prefix.address v4 in
+                    (Ipaddr.V4.Set.add v4 ipv4s, ipv6s)
+                | Ipaddr.V6 v6 ->
+                    let v6 = Ipaddr.V6.Prefix.address v6 in
+                    (ipv4s, Ipaddr.V6.Set.add v6 ipv6s))
+              (Ipaddr.V4.Set.empty, Ipaddr.V6.Set.empty)
+              ips
+          in
+          let a_record = (3600l, ipv4s) and quad_a_record = (3600l, ipv6s) in
+          let soa = Dns.Soa.create (K.name ()) in
+          Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa Dns_trie.empty
+          |> (if Ipaddr.V4.Set.is_empty ipv4s then Fun.id
+              else Dns_trie.insert (K.name ()) Dns.Rr_map.A a_record)
+          |>
+          if Ipaddr.V6.Set.is_empty ipv6s then Fun.id
+          else Dns_trie.insert (K.name ()) Dns.Rr_map.Aaaa quad_a_record
       in
       let trie =
         List.fold_left
