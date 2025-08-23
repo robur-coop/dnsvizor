@@ -635,9 +635,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
              with
             | Ok config_data -> (
                 match Dnsvizor.Config_parser.parse_file config_data with
-                | Ok _parsed_dnsmasq_config ->
-                    (*TODO: handle configuration file properly*)
+                | Ok parsed_dnsmasq_config ->
                     Logs.info (fun m -> m "Dnsmasq config parsed correctly");
+                    update_configuration t config_data parsed_dnsmasq_config;
                     None
                 | Error (`Msg err) ->
                     Logs.err (fun m ->
