@@ -181,19 +181,26 @@ module K = struct
     let doc = Arg.info ~doc:"The HTTPS port." [ "https-port" ] in
     Mirage_runtime.register_arg Arg.(value & opt int 443 & doc)
 
+  let no_tls =
+    let doc =
+      Arg.info ~doc:"Disable TLS (HTTPS server and DNS-over-TLS/DNS-over-HTTPS)"
+        [ "no-tls" ]
+    in
+    Mirage_runtime.register_arg Arg.(value & flag doc)
+
   let valid_bits str =
     try
       let bits = int_of_string str in
       bits >= 89
     with _ -> false
 
+  let ca_key_doc =
+    "The seed (base64 encoded) used to generate the private key for the \
+     certificate. The seed can be prepended by the type of the key (rsa or \
+     ed25519) plus a colon. For a RSA key, the user can also specify bits: \
+     \"rsa:4096:foo=\"."
+
   let ca_key =
-    let doc =
-      "The seed (base64 encoded) used to generate the private key for the \
-       certificate. The seed can be prepended by the type of the key (rsa or \
-       ed25519) plus a colon. For a RSA key, the user can also specify bits: \
-       \"rsa:4096:foo=\"."
-    in
     let ( let* ) = Result.bind in
     let parser str =
       match String.split_on_char ':' str with
@@ -218,13 +225,15 @@ module K = struct
     let pp ppf (str, _) = Fmt.string ppf str in
     let arg =
       let open Arg in
-      required & opt (some (conv (parser, pp))) None & info [ "ca-seed" ] ~doc
+      value
+      & opt (some (conv (parser, pp))) None
+      & info [ "ca-seed" ] ~doc:ca_key_doc
     in
     Mirage_runtime.register_arg arg
 
   let password =
     let doc = Arg.info ~doc:"Password used for authentication" [ "password" ] in
-    Mirage_runtime.register_arg Arg.(required & opt (some string) None doc)
+    Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 
   let name =
     let ( let* ) = Result.bind in
@@ -237,7 +246,10 @@ module K = struct
     let doc = "The name (and the SNI for the certificate) of the unikernel." in
     let arg =
       let open Arg in
-      required & opt (some domain_name) None & info [ "name" ] ~doc
+      required
+      & opt (some domain_name)
+          (Some Domain_name.(of_string_exn "dnsvizor" |> host_exn))
+      & info [ "name" ] ~doc
     in
     Mirage_runtime.register_arg arg
 
@@ -325,11 +337,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         let dhcp_config = dhcp_configuration_of_dhcp_range t.mac dhcp_range in
         t.dhcp_configuration <- dhcp_config
     | _ -> ()
-
-  let js_file assets =
-    ASSETS.get assets (Mirage_kv.Key.v "main.js") >|= function
-    | Error _e -> invalid_arg "JS file could not be loaded"
-    | Ok js -> js
 
   module Net = struct
     (* A Mirage_net.S implementation which diverts DHCP messages to a DHCP
@@ -484,8 +491,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       go (Map.empty, []) m
 
     let authenticate_user ~auth_password ~system_password content =
-      match auth_password with
-      | Some http_password ->
+      match (system_password, auth_password) with
+      | Some system_password, Some http_password ->
           if String.equal http_password system_password then content
           else (
             Logs.warn (fun m ->
@@ -493,7 +500,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   "password-auth: Passwords do not match, authentication \
                    failed.");
             Some (`Authenticate ("Passwords do not match", None)))
-      | None ->
+      | None, _ ->
+          (* No password provided at startup *)
+          Logs.err (fun m -> m "password-auth: No password provided at startup");
+          Some (`Authenticate ("Unikernel wasn't given a password", None))
+      | _, None ->
           (* No password provided in the request *)
           Logs.err (fun m -> m "password-auth: No password in http request");
           Some (`Authenticate ("User didn't provide a password", None))
@@ -701,7 +712,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         reqd ->
         (reqd, headers, request, response, ro, wo) Alpn.protocol ->
         string ->
-        string ->
+        string option ->
         unit =
      fun t resolver mvar _flow (dst, port) reqd protocol js_file password ->
       match protocol with
@@ -1026,7 +1037,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
     let start_resolver t stack tcp resolver http_client js_file password =
       let fresh_tls () =
-        let ca = CA.make (K.name ()) (K.ca_key ()) in
+        let ca = CA.make (K.name ()) (Option.get (K.ca_key ())) in
         let cert, pk = Result.get_ok ca in
         let own_cert = `Single ([ cert ], pk) in
         let dns_tls =
@@ -1061,10 +1072,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
            we can safely wait for both. *)
         Lwt.both (bell ()) th >>= fun _ -> go (fresh_tls ()) resolver mvar
       in
-      let cert, dns_tls, tls = fresh_tls () in
-      let resolver = Resolver.resolver stack ~root:true ~tls:dns_tls resolver in
-      let mvar, th = update_blocklist http_client resolver in
-      Lwt.join [ th; go (cert, dns_tls, tls) resolver mvar ]
+      if K.no_tls () then
+        let resolver = Resolver.resolver stack ~root:true resolver in
+        let mvar, th = update_blocklist http_client resolver in
+        th
+      else
+        let cert, dns_tls, tls = fresh_tls () in
+        let resolver =
+          Resolver.resolver stack ~root:true ~tls:dns_tls resolver
+        in
+        let mvar, th = update_blocklist http_client resolver in
+        Lwt.join [ th; go (cert, dns_tls, tls) resolver mvar ]
   end
 
   let start net assets =
@@ -1155,9 +1173,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       Dns_server.Primary.create ~trie_cache_entries:0
         ~rng:Mirage_crypto_rng.generate trie
     in
-    js_file assets >>= fun js_file ->
     (match K.dns_upstream () with
-    | None ->
+    | None -> (
         Logs.info (fun m -> m "using a recursive resolver");
         let resolver =
           let features =
@@ -1172,11 +1189,32 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Mirage_crypto_rng.generate primary_t
         in
         let password = K.password () in
-
-        Lwt.async (fun () ->
-            Daemon.start_resolver t stack tcp resolver http_client js_file
-              password);
-        Lwt.return_unit
+        (match password with
+        | None ->
+            Logs.warn (fun m ->
+                m
+                  "No password specified, endpoints requiring authentication \
+                   won't be accessible.")
+        | Some _ -> ());
+        (if K.no_tls () then
+           Logs.warn (fun m ->
+               m
+                 "TLS is disabled, no HTTPS management interface, and no \
+                  DNS-over-TLS and DNS-over-HTTPS will be available.")
+         else
+           match K.ca_key () with
+           | None ->
+               Logs.err (fun m ->
+                   m "Neither --no-tls nor --ca-seed specified. %s" K.ca_key_doc);
+               exit Mirage_runtime.argument_error
+           | Some _ -> ());
+        ASSETS.get assets (Mirage_kv.Key.v "main.js") >>= function
+        | Error _e -> invalid_arg "JS file could not be loaded"
+        | Ok js_file ->
+            Lwt.async (fun () ->
+                Daemon.start_resolver t stack tcp resolver http_client js_file
+                  password);
+            Lwt.return_unit)
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
         Stub.H.connect_device stack >>= fun happy_eyeballs ->
