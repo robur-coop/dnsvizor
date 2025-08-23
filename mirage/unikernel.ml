@@ -1140,9 +1140,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           in
           let a_record = (3600l, ipv4s) and quad_a_record = (3600l, ipv6s) in
           let soa = Dns.Soa.create (K.name ()) in
-          Dns_trie.insert (K.name ()) Dns.Rr_map.A a_record Dns_trie.empty
-          |> Dns_trie.insert (K.name ()) Dns.Rr_map.Aaaa quad_a_record
-          |> Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa
+          Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa Dns_trie.empty
+          |> (if Ipaddr.V4.Set.is_empty ipv4s then Fun.id
+              else Dns_trie.insert (K.name ()) Dns.Rr_map.A a_record)
+          |>
+          if Ipaddr.V6.Set.is_empty ipv6s then Fun.id
+          else Dns_trie.insert (K.name ()) Dns.Rr_map.Aaaa quad_a_record
       in
       let trie =
         List.fold_left
