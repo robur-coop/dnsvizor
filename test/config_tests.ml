@@ -256,6 +256,51 @@ let ok_dhcp_host_dnsmasq_conf_example =
       *)
     ]
 
+let domain_t =
+  let equal (da, ipa) (db, ipb) =
+    Domain_name.equal da db
+    && opt_eq (fun a b -> match a, b with
+        | `Interface a, `Interface b -> String.equal a b
+        | `Ip a, `Ip b -> Ipaddr.V4.Prefix.compare a b = 0
+        | `Ip_range (sa, ea), `Ip_range (sb, eb) ->
+          ipv4_eq sa sb && ipv4_eq ea eb
+        | _ -> false) ipa ipb
+  in
+  Alcotest.testable pp_domain equal
+
+let ok_domain () =
+  let input = "home.lan" in
+  let expected = Domain_name.of_string_exn "home.lan", None in
+  Alcotest.(
+    check
+      (result domain_t msg_t)
+      "Domain is good" (Ok expected)
+      (parse_one_arg domain input))
+
+let ok_domain2 () =
+  let input = "thekelleys.org.uk,192.168.0.0/24" in
+  let expected =
+    Domain_name.of_string_exn "thekelleys.org.uk",
+    Some (`Ip (Ipaddr.V4.Prefix.of_string_exn "192.168.0.0/24"))
+  in
+  Alcotest.(
+    check
+      (result domain_t msg_t)
+      "Domain is good" (Ok expected)
+      (parse_one_arg domain input))
+
+let ok_domain3 () =
+  let input = "thekelleys.org.uk,192.168.0.1,192.168.7.255" in
+  let expected =
+    Domain_name.of_string_exn "thekelleys.org.uk",
+    Some (`Ip_range Ipaddr.V4.(of_string_exn "192.168.0.1", of_string_exn "192.168.7.255"))
+  in
+  Alcotest.(
+    check
+      (result domain_t msg_t)
+      "Domain is good" (Ok expected)
+      (parse_one_arg domain input))
+
 let tests =
   [
     ("DHCP range", `Quick, ok_dhcp_range);
@@ -266,7 +311,12 @@ let tests =
     ("DHCP host sonicscrewdriver", `Quick, ok_dhcp_host_sonicscrewdriver);
     ("DHCP host apollon", `Quick, ok_dhcp_host_apollon);
   ]
-  @ ok_dhcp_host_dnsmasq_conf_example
+  @ ok_dhcp_host_dnsmasq_conf_example @
+  [
+    ("Domain from example", `Quick, ok_domain);
+    ("Domain from manpage", `Quick, ok_domain2);
+    ("Domain with ip range", `Quick, ok_domain3);
+  ]
 
 let string_of_file filename =
   let config_dir = "sample-configuration-files" in
