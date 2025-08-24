@@ -638,7 +638,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 | Ok parsed_dnsmasq_config ->
                     Logs.info (fun m -> m "Dnsmasq config parsed correctly");
                     update_configuration t config_data parsed_dnsmasq_config;
-                    None
+                    Some (`Redirect ("/configuration", None))
                 | Error (`Msg err) ->
                     Logs.err (fun m ->
                         m "Error parsing dnsmasq configuration: %s" err);
