@@ -335,16 +335,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     { mac; configuration; dhcp_configuration; dhcp_leases }
 
   let update_configuration t config
-      (parsed_config :
-        [ `Dhcp_range of Dnsvizor.Config_parser.dhcp_range
-        | `Domain of
-          [ `raw ] Domain_name.t
-          * [ `Interface of string
-            | `Ip of Ipaddr.V4.Prefix.t
-            | `Ip_range of Ipaddr.V4.t * Ipaddr.V4.t ]
-        | `Dnssec
-        | `Ignored ]
-        list) =
+      (parsed_config : Dnsvizor.Config_parser.config) =
     t.configuration <- config;
     match
       List.find_opt

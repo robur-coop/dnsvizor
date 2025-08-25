@@ -413,6 +413,13 @@ let pp_address_range ppf = function
   | `Ip_range (a, b) -> Fmt.pf ppf "%a,%a" Ipaddr.V4.pp a Ipaddr.V4.pp b
   | `Ip pre -> Ipaddr.V4.Prefix.pp ppf pre
 
+type domain =
+  [ `raw ] Domain_name.t
+  * [ `Interface of string
+    | `Ip of Ipaddr.V4.Prefix.t
+    | `Ip_range of Ipaddr.V4.t * Ipaddr.V4.t ]
+    option
+
 let pp_domain ppf (domain, ip_or_interface) =
   Fmt.pf ppf "%a%a" Domain_name.pp domain
     Fmt.(option ~none:(any "") string)
@@ -460,6 +467,9 @@ let domain_docv =
 
 let domain_c =
   conv_cmdliner ~docv:domain_docv (domain arg_end_of_directive) pp_domain
+
+type config =
+  [ `Dhcp_range of dhcp_range | `Domain of domain | `Dnssec | `Ignored ] list
 
 let parse_file data =
   let rules =
