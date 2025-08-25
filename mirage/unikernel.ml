@@ -109,6 +109,14 @@ module K = struct
     Mirage_runtime.register_arg
       Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
 
+  let domain =
+    let doc =
+      Arg.info ~doc:"Domain to use." ~docv:Config_parser.domain_docv
+        ~docs:s_dnsmasq [ "domain" ]
+    in
+    Mirage_runtime.register_arg
+      Arg.(value & opt Config_parser.(some domain_c) None doc)
+
   (* various ignored DNSmasq configuration options *)
   let interface =
     let doc =
@@ -271,14 +279,18 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     mutable dhcp_leases : Dhcp_server.Lease.database;
   }
 
-  let dhcp_configuration_of_dhcp_range mac dhcp_range =
+  let dhcp_configuration_of mac dhcp_range domain =
     let v4_address = Ipaddr.V4.Prefix.address (K.ipv4 ()) in
     let options =
       (match K.ipv4_gateway () with
       | None -> []
       | Some x -> [ Dhcp_wire.Routers [ x ] ])
       @ [ Dhcp_wire.Dns_servers [ v4_address ] ]
-      (* Dhcp_wire.Domain_name __ *)
+      @ Option.to_list
+          (Option.map
+             (fun (domain, _) ->
+               Dhcp_wire.Domain_name (Domain_name.to_string domain))
+             domain)
     in
     let range =
       (* doesn't check start < stop *)
@@ -307,7 +319,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let dhcp_configuration =
       match K.dhcp_range () with
       | None -> None
-      | Some dhcp_range -> dhcp_configuration_of_dhcp_range mac dhcp_range
+      | Some dhcp_range -> dhcp_configuration_of mac dhcp_range (K.domain ())
     in
     let dhcp_leases = Dhcp_server.Lease.make_db () in
     let configuration =
@@ -324,7 +336,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
   let update_configuration t config
       (parsed_config :
-        [ `Dhcp_range of Dnsvizor.Config_parser.dhcp_range | `Dnssec | `Ignored ]
+        [ `Dhcp_range of Dnsvizor.Config_parser.dhcp_range
+        | `Domain of
+          [ `raw ] Domain_name.t
+          * [ `Interface of string
+            | `Ip of Ipaddr.V4.Prefix.t
+            | `Ip_range of Ipaddr.V4.t * Ipaddr.V4.t ]
+        | `Dnssec
+        | `Ignored ]
         list) =
     t.configuration <- config;
     match
@@ -333,7 +352,16 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         parsed_config
     with
     | Some (`Dhcp_range dhcp_range) ->
-        let dhcp_config = dhcp_configuration_of_dhcp_range t.mac dhcp_range in
+        let domain =
+          match
+            List.find_opt
+              (function `Domain _ -> true | _ -> false)
+              parsed_config
+          with
+          | Some (`Domain d) -> Some d
+          | _ -> None
+        in
+        let dhcp_config = dhcp_configuration_of t.mac dhcp_range domain in
         t.dhcp_configuration <- dhcp_config
     | _ -> ()
 
@@ -1141,6 +1169,22 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       let trie =
         if K.no_hosts () then Dns_trie.empty
         else
+          let fqdn =
+            match K.domain () with
+            | None -> K.name ()
+            | Some (d, _) -> (
+                match
+                  Result.bind
+                    (Domain_name.append (K.name ()) d)
+                    Domain_name.host
+                with
+                | Ok d -> d
+                | Error (`Msg m) ->
+                    Logs.err (fun m ->
+                        m "Couldn't figure the FQDN from host %a and domain %a"
+                          Domain_name.pp (K.name ()) Domain_name.pp d);
+                    exit Mirage_runtime.argument_error)
+          in
           let ips = S.IP.configured_ips ip in
           let ipv4s, ipv6s =
             List.fold_left
@@ -1156,13 +1200,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               ips
           in
           let a_record = (3600l, ipv4s) and quad_a_record = (3600l, ipv6s) in
-          let soa = Dns.Soa.create (K.name ()) in
-          Dns_trie.insert (K.name ()) Dns.Rr_map.Soa soa Dns_trie.empty
+          let soa = Dns.Soa.create fqdn in
+          Dns_trie.insert fqdn Dns.Rr_map.Soa soa Dns_trie.empty
           |> (if Ipaddr.V4.Set.is_empty ipv4s then Fun.id
-              else Dns_trie.insert (K.name ()) Dns.Rr_map.A a_record)
+              else Dns_trie.insert fqdn Dns.Rr_map.A a_record)
           |>
           if Ipaddr.V6.Set.is_empty ipv6s then Fun.id
-          else Dns_trie.insert (K.name ()) Dns.Rr_map.Aaaa quad_a_record
+          else Dns_trie.insert fqdn Dns.Rr_map.Aaaa quad_a_record
       in
       let trie =
         List.fold_left

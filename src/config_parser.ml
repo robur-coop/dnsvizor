@@ -15,6 +15,12 @@ let conv_cmdliner ?docv rule pp = Cmdliner.Arg.conv ?docv (parse_one rule, pp)
 
 (* some basic rules *)
 
+let int =
+  take_while1 (function '0' .. '9' -> true | _ -> false) >>= fun n ->
+  match int_of_string_opt n with
+  | None -> fail (Fmt.str "Couldn't convert %S to an integer" n)
+  | Some n -> return n
+
 (* be careful to not consume ',' anywhere - this is used as separator *)
 let ipv4_dotted =
   take_while1 (function '0' .. '9' | '.' -> true | _ -> false) >>= fun ip ->
@@ -29,23 +35,22 @@ let week = 7 * day
 let infinite = 1 lsl 32 (* DHCP has 32 bits for this *)
 
 let lease_time =
-  take_while1 (function '0' .. '9' -> true | _ -> false)
-  >>= (fun dur ->
-  match int_of_string_opt dur with
-  | None -> fail (Fmt.str "Couldn't convert %S to an integer" dur)
-  | Some n ->
-      choice ~failure_msg:"bad lease time"
-        [
-          string "w" *> return ("w", n * week);
-          string "d" *> return ("d", n * day);
-          string "h" *> return ("h", n * hour);
-          string "m" *> return ("m", n * minute);
-          return ("", n);
-        ]
-      >>= fun (c, r) ->
-      if r > 0 && r < infinite then return r
-      else
-        fail (Fmt.str "Value %u (from %S%s) does not fit into 32 bits" r dur c))
+  int
+  >>= (fun n ->
+  choice ~failure_msg:"bad lease time"
+    [
+      string "w" *> return ("w", n * week);
+      string "d" *> return ("d", n * day);
+      string "h" *> return ("h", n * hour);
+      string "m" *> return ("m", n * minute);
+      return ("", n);
+    ]
+  >>= fun (c, r) ->
+  if r > 0 && r < infinite then return r
+  else
+    fail
+      (Fmt.str "Value %u (from %S%s) does not fit into 32 bits" r
+         (string_of_int n) c))
   <|> string "infinite" *> return infinite
 
 let isspace = function
@@ -394,6 +399,44 @@ let dhcp_host end_of_directive =
          *silently* ignore any previous values. Remove earlier %s argument(s)."
         what what
 
+type address_range =
+  [ `Ip_range of Ipaddr.V4.t * Ipaddr.V4.t | `Ip of Ipaddr.V4.Prefix.t ]
+
+let address_range =
+  ipv4_dotted >>= fun start ->
+  string "," *> ipv4_dotted
+  >>= (fun stop -> return (`Ip_range (start, stop)))
+  <|> ( string "/" *> int >>= fun prefix ->
+        return (`Ip (Ipaddr.V4.Prefix.make prefix start)) )
+
+let pp_address_range ppf = function
+  | `Ip_range (a, b) -> Fmt.pf ppf "%a,%a" Ipaddr.V4.pp a Ipaddr.V4.pp b
+  | `Ip pre -> Ipaddr.V4.Prefix.pp ppf pre
+
+let pp_domain ppf (domain, ip_or_interface) =
+  Fmt.pf ppf "%a%a" Domain_name.pp domain
+    Fmt.(option ~none:(any "") string)
+    (Option.map
+       (function
+         | `Interface int -> "," ^ int
+         | #address_range as ar -> "," ^ Fmt.to_to_string pp_address_range ar)
+       ip_or_interface)
+
+let domain end_of_directive =
+  ( take_while1 (function ',' -> false | _ -> true) >>= fun name ->
+    match Domain_name.of_string name with
+    | Ok domain -> return domain
+    | Error (`Msg e) -> fail (Fmt.str "Invalid domain: %s: %S" e name) )
+  >>= fun domain ->
+  option None
+    (string ","
+    *> (address_range
+       >>= (fun ar -> return (Some ar))
+       <|> ( take_while (function '\n' -> false | _ -> true) >>= fun intf ->
+             return (Some (`Interface intf)) )))
+  >>= fun snd ->
+  end_of_directive >>| fun () -> (domain, snd)
+
 let dhcp_range_docv =
   "<start>[,<end>|<mode>[,<netmask>[,<broadcast>]]][,<lease-time>]"
 
@@ -409,6 +452,14 @@ let dhcp_host_c =
   conv_cmdliner ~docv:dhcp_range_docv
     (dhcp_host arg_end_of_directive)
     pp_dhcp_host
+
+let domain_docv =
+  (* note that address range is either "<start address>,<end address>" or "<ip address>/<prefix length>" *)
+  (* TODO dnsmasq has [,local] after the "<address range>" *)
+  "<domain>[[,<address range>]|<interface>]"
+
+let domain_c =
+  conv_cmdliner ~docv:domain_docv (domain arg_end_of_directive) pp_domain
 
 let parse_file data =
   let rules =
@@ -430,6 +481,8 @@ let parse_file data =
            ( directive_prefix "dhcp-range" *> dhcp_range conf_end_of_directive
            >>| fun range -> `Dhcp_range range );
            (flag "dnssec" >>| fun _ -> `Dnssec);
+           ( directive_prefix "domain" *> domain conf_end_of_directive
+           >>| fun domain -> `Domain domain );
            ignore_directive "interface";
            ignore_directive "except-interface";
            ignore_directive "listen-address";
