@@ -64,12 +64,7 @@ let management_stack =
        (netif ~group:"management" "management"))
     (generic_stackv4v6 mynetwork)
 
-let name =
-  runtime_arg ~pos:__POS__
-    {|let doc = Cmdliner.Arg.info ~doc:"Name of the unikernel"
-        ~docs:Mirage_runtime.s_log [ "name" ]
-      in
-      Cmdliner.Arg.(value & opt string "robur.coop" doc)|}
+let name = runtime_arg ~pos:__POS__ "Unikernel.K.name_k"
 
 let monitoring =
   let monitor = Runtime_arg.(v (monitor None)) in
@@ -78,7 +73,7 @@ let monitoring =
         code ~pos:__POS__
           "Lwt.return (match %s with| None -> Logs.warn (fun m -> m \"no \
            monitor specified, not outputting statistics\")| Some ip -> \
-           %s.create ip ~hostname:%s %s)"
+           %s.create ip ~hostname:(Domain_name.to_string %s) %s)"
           monitor modname name stack
     | _ -> assert false
   in
@@ -94,7 +89,8 @@ let syslog =
         code ~pos:__POS__
           "Lwt.return (match %s with| None -> Logs.warn (fun m -> m \"no \
            syslog specified, dumping on stdout\")| Some ip -> \
-           Logs.set_reporter (%s.create %s ip ~hostname:%s ()))"
+           Logs.set_reporter (%s.create %s ip ~hostname:(Domain_name.to_string \
+           %s) ()))"
           syslog modname stack name
     | _ -> assert false
   in
