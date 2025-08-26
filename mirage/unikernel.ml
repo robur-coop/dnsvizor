@@ -1158,29 +1158,31 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let primary_t =
       (* setup DNS server state: *)
       let trie =
-        if K.no_hosts () then Dns_trie.empty
+        let domain, fqdn =
+          match K.domain () with
+          | None -> (K.name (), K.name ())
+          | Some (d, _) -> (
+              match
+                ( Domain_name.host d,
+                  Result.bind
+                    (Domain_name.append (K.name ()) d)
+                    Domain_name.host )
+              with
+              | Ok d, Ok fqdn -> (d, fqdn)
+              | _, Error (`Msg m) ->
+                  Logs.err (fun m ->
+                      m "Couldn't figure the FQDN from host %a and domain %a"
+                        Domain_name.pp (K.name ()) Domain_name.pp d);
+                  exit Mirage_runtime.argument_error
+              | Error (`Msg m), _ ->
+                  Logs.err (fun m ->
+                      m "Couldn't use the domain %a as host" Domain_name.pp d);
+                  exit Mirage_runtime.argument_error)
+        in
+        let soa = Dns.Soa.create domain in
+        let trie = Dns_trie.insert domain Dns.Rr_map.Soa soa Dns_trie.empty in
+        if K.no_hosts () then trie
         else
-          let domain, fqdn =
-            match K.domain () with
-            | None -> (K.name (), K.name ())
-            | Some (d, _) -> (
-                match
-                  ( Domain_name.host d,
-                    Result.bind
-                      (Domain_name.append (K.name ()) d)
-                      Domain_name.host )
-                with
-                | Ok d, Ok fqdn -> (d, fqdn)
-                | _, Error (`Msg m) ->
-                    Logs.err (fun m ->
-                        m "Couldn't figure the FQDN from host %a and domain %a"
-                          Domain_name.pp (K.name ()) Domain_name.pp d);
-                    exit Mirage_runtime.argument_error
-                | Error (`Msg m), _ ->
-                    Logs.err (fun m ->
-                        m "Couldn't use the domain %a as host" Domain_name.pp d);
-                    exit Mirage_runtime.argument_error)
-          in
           let ips = S.IP.configured_ips ip in
           let ipv4s, ipv6s =
             List.fold_left
@@ -1196,10 +1198,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               ips
           in
           let a_record = (3600l, ipv4s) and quad_a_record = (3600l, ipv6s) in
-          let soa = Dns.Soa.create domain in
-          Dns_trie.insert domain Dns.Rr_map.Soa soa Dns_trie.empty
-          |> (if Ipaddr.V4.Set.is_empty ipv4s then Fun.id
-              else Dns_trie.insert fqdn Dns.Rr_map.A a_record)
+          (if Ipaddr.V4.Set.is_empty ipv4s then trie
+           else Dns_trie.insert fqdn Dns.Rr_map.A a_record trie)
           |>
           if Ipaddr.V6.Set.is_empty ipv6s then Fun.id
           else Dns_trie.insert fqdn Dns.Rr_map.Aaaa quad_a_record
