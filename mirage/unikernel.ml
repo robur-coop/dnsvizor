@@ -288,6 +288,10 @@ module Net (N : Mirage_net.S) = struct
     net : N.t;
     mutable config : Dhcp_server.Config.t option;
     mutable leases : Dhcp_server.Lease.database;
+    mutable lease_acquired :
+      Dhcp_server.Lease.t ->
+      Dhcp_wire.dhcp_option list ->
+      (Dhcp_wire.dhcp_option list, unit) result Lwt.t;
   }
 
   let write t = N.write t.net
@@ -317,25 +321,34 @@ module Net (N : Mirage_net.S) = struct
             Logs.err (fun m -> m "%s" e);
             Lwt.return_unit
         | Dhcp_server.Input.Reply (reply, lease_opt, leases) -> (
-            t.leases <- leases;
             (match lease_opt with
-            | None -> ()
-            | Some (lease, opts) ->
+            | None -> Lwt.return (Ok reply)
+            | Some (lease, opts) -> (
                 Logs.info (fun m ->
-                    m
-                      "Handing out lease %s, received options %a@.sending \
-                       reply %a"
+                    m "Handing out lease %s, received options %a"
                       (Dhcp_server.Lease.to_string lease)
                       Fmt.(list ~sep:(any ", ") string)
-                      (List.map Dhcp_wire.dhcp_option_to_string opts)
-                      Dhcp_wire.pp_pkt reply));
-            N.write t.net
-              ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet)
-              (Dhcp_wire.pkt_into_buf reply)
-            >|= function
-            | Ok () -> ()
-            | Error ne ->
-                Logs.err (fun m -> m "got a network error: %a" N.pp_error ne)))
+                      (List.map Dhcp_wire.dhcp_option_to_string opts));
+                t.lease_acquired lease opts >>= function
+                | Ok options ->
+                    let reply =
+                      Dhcp_wire.{ reply with options = reply.options @ options }
+                    in
+                    Lwt.return (Ok reply)
+                | Error _ as e -> Lwt.return e))
+            >>= function
+            | Error () -> Lwt.return_unit
+            | Ok reply -> (
+                Logs.info (fun m -> m "Sending reply %a" Dhcp_wire.pp_pkt reply);
+                t.leases <- leases;
+                N.write t.net
+                  ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet)
+                  (Dhcp_wire.pkt_into_buf reply)
+                >|= function
+                | Ok () -> ()
+                | Error ne ->
+                    Logs.err (fun m ->
+                        m "got a network error: %a" N.pp_error ne))))
 
   let listen t ~header_size net =
     let dhcp_or_not buf =
@@ -357,7 +370,8 @@ module Net (N : Mirage_net.S) = struct
 
   let connect net config =
     let leases = Dhcp_server.Lease.make_db () in
-    { net; config; leases }
+    let lease_acquired _ _ = Lwt.return (Ok []) in
+    { net; config; leases; lease_acquired }
 
   let disconnect _ =
     Logs.warn (fun m -> m "ignoring disconnect");
@@ -1238,6 +1252,31 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Mirage_crypto_rng.generate primary_t
         in
         let resolver = Resolver.resolver stack ~root:true resolver in
+        let dhcp_lease_cb lease options =
+          (match
+             ( List.find_opt
+                 (function Dhcp_wire.Hostname _ -> true | _ -> false)
+                 options,
+               K.domain () )
+           with
+          | Some (Hostname name), Some (domain, _) -> (
+              match Domain_name.prepend_label domain name with
+              | Ok fqdn ->
+                  Logs.info (fun m -> m "recording %a" Domain_name.pp fqdn);
+                  let trie = Resolver.primary_data resolver in
+                  let a_record =
+                    (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
+                  in
+                  let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
+                  Resolver.update_primary_data resolver trie
+              | Error (`Msg msg) ->
+                  Logs.warn (fun m ->
+                      m "couldn't construct a domain name from %S and %a: %s"
+                        name Domain_name.pp domain msg))
+          | _ -> ());
+          Lwt.return (Ok [])
+        in
+        net.lease_acquired <- dhcp_lease_cb;
         let t = { net; mac; configuration; resolver } in
         let password = K.password () in
         (match password with
