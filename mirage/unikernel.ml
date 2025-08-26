@@ -271,12 +271,120 @@ module K = struct
   let name = Mirage_runtime.register_arg name_k
 end
 
+module Net (N : Mirage_net.S) = struct
+  (* A Mirage_net.S implementation which diverts DHCP messages to a DHCP
+     server. The DHCP server needs to get the entire Ethernet frame, because
+     the Ethernet source address is the address to send replies to, its IPv4
+     addresses (source, destination) do not matter (since the DHCP client that
+     sent this request does not have an IP address yet). ARP cannot be used
+     by DHCP, because the client does not have an IP address (and thus no ARP
+     replies). *)
+
+  type error = N.error
+
+  let pp_error = N.pp_error
+
+  type nonrec t = {
+    net : N.t;
+    mutable config : Dhcp_server.Config.t option;
+    mutable leases : Dhcp_server.Lease.database;
+  }
+
+  let write t = N.write t.net
+
+  let handle_dhcp t config buf =
+    match Dhcp_wire.pkt_of_buf buf (Cstruct.length buf) with
+    | Error e ->
+        Logs.err (fun m -> m "Can't parse packet: %s" e);
+        Lwt.return_unit
+    | Ok pkt -> (
+        let now =
+          Mirage_mtime.elapsed_ns () |> Duration.to_sec |> Int32.of_int
+        in
+        match Dhcp_server.Input.input_pkt config t.leases pkt now with
+        | Dhcp_server.Input.Silence -> Lwt.return_unit
+        | Dhcp_server.Input.Update leases ->
+            t.leases <- leases;
+            Logs.debug (fun m ->
+                m "Received packet %a - updated lease database" Dhcp_wire.pp_pkt
+                  pkt);
+            Lwt.return_unit
+        | Dhcp_server.Input.Warning w ->
+            Logs.warn (fun m -> m "%s" w);
+            Lwt.return_unit
+        | Dhcp_server.Input.Error e ->
+            Logs.err (fun m -> m "%s" e);
+            Lwt.return_unit
+        | Dhcp_server.Input.Reply (reply, leases) ->
+            t.leases <- leases;
+            Logs.debug (fun m -> m "Received packet %a" Dhcp_wire.pp_pkt pkt);
+            N.write t.net
+              ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet)
+              (Dhcp_wire.pkt_into_buf reply)
+            >|= fun _ ->
+            Logs.debug (fun m ->
+                m "Sent reply packet %a" Dhcp_wire.pp_pkt reply))
+
+  let listen t ~header_size net =
+    let dhcp_or_not buf =
+      let of_interest hdr =
+        let dst = hdr.Ethernet.Packet.destination in
+        Macaddr.compare dst (N.mac t.net) = 0 || not (Macaddr.is_unicast dst)
+      in
+      match t.config with
+      | None -> net buf
+      | Some config -> (
+          match Ethernet.Packet.of_cstruct buf with
+          | Ok (eth_header, _)
+            when of_interest eth_header
+                 && Dhcp_wire.is_dhcp buf (Cstruct.length buf) ->
+              handle_dhcp t config buf
+          | _ -> net buf)
+    in
+    N.listen t.net ~header_size dhcp_or_not
+
+  let connect net config =
+    let leases = Dhcp_server.Lease.make_db () in
+    { net; config; leases }
+
+  let disconnect _ =
+    Logs.warn (fun m -> m "ignoring disconnect");
+    Lwt.return_unit
+
+  let mac t = N.mac t.net
+  let mtu t = N.mtu t.net
+  let get_stats_counters t = N.get_stats_counters t.net
+  let reset_stats_counters t = N.reset_stats_counters t.net
+end
+
 module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
+  module Net = Net (N)
+  module ETH = Ethernet.Make (Net)
+  module ARP = Arp.Make (ETH)
+  module IPV4 = Static_ipv4.Make (ETH) (ARP)
+  module IPV6 = Ipv6.Make (Net) (ETH)
+  module IPV4V6 = Tcpip_stack_direct.IPV4V6 (IPV4) (IPV6)
+  module ICMP = Icmpv4.Make (IPV4)
+  module UDP = Udp.Make (IPV4V6)
+  module TCP = Tcp.Flow.Make (IPV4V6)
+
+  module S =
+    Tcpip_stack_direct.MakeV4V6 (Net) (ETH) (ARP) (IPV4V6) (ICMP) (UDP) (TCP)
+
+  module Resolver = Dns_resolver_mirage.Make (S)
+  module Stub = Dns_stub_mirage.Make (S)
+  module HTTP = Paf_mirage.Make (TCP)
+  module HE = Happy_eyeballs_mirage.Make (S)
+  module Dns_client = Dns_client_mirage.Make (S) (HE)
+  module Mimic_he = Mimic_happy_eyeballs.Make (S) (HE) (Dns_client)
+  module Http_client = Http_mirage_client.Make (TCP) (Mimic_he)
+  module Map = Map.Make (String)
+
   type t = {
+    net : Net.t;
     mac : Macaddr.t;
     mutable configuration : string;
-    mutable dhcp_configuration : Dhcp_server.Config.t option;
-    mutable dhcp_leases : Dhcp_server.Lease.database;
+    resolver : Resolver.t;
   }
 
   let dhcp_configuration_of mac dhcp_range domain =
@@ -321,7 +429,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | None -> None
       | Some dhcp_range -> dhcp_configuration_of mac dhcp_range (K.domain ())
     in
-    let dhcp_leases = Dhcp_server.Lease.make_db () in
     let configuration =
       String.concat "\n"
         [
@@ -332,7 +439,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           (if K.dnssec () then "dnssec" else "");
         ]
     in
-    { mac; configuration; dhcp_configuration; dhcp_leases }
+    (configuration, dhcp_configuration)
 
   let update_configuration t config
       (parsed_config : Dnsvizor.Config_parser.config) =
@@ -353,112 +460,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           | _ -> None
         in
         let dhcp_config = dhcp_configuration_of t.mac dhcp_range domain in
-        t.dhcp_configuration <- dhcp_config
+        t.net.config <- dhcp_config
     | _ -> ()
-
-  module Net = struct
-    (* A Mirage_net.S implementation which diverts DHCP messages to a DHCP
-       server. The DHCP server needs to get the entire Ethernet frame, because
-       the Ethernet source address is the address to send replies to, its IPv4
-       addresses (source, destination) do not matter (since the DHCP client that
-       sent this request does not have an IP address yet). ARP cannot be used
-       by DHCP, because the client does not have an IP address (and thus no ARP
-       replies). *)
-
-    type error = N.error
-
-    let pp_error = N.pp_error
-
-    type nonrec t = { net : N.t; configuration : t }
-
-    let write t = N.write t.net
-
-    let handle_dhcp t config buf =
-      match Dhcp_wire.pkt_of_buf buf (Cstruct.length buf) with
-      | Error e ->
-          Logs.err (fun m -> m "Can't parse packet: %s" e);
-          Lwt.return_unit
-      | Ok pkt -> (
-          let now =
-            Mirage_mtime.elapsed_ns () |> Duration.to_sec |> Int32.of_int
-          in
-          match
-            Dhcp_server.Input.input_pkt config t.configuration.dhcp_leases pkt
-              now
-          with
-          | Dhcp_server.Input.Silence -> Lwt.return_unit
-          | Dhcp_server.Input.Update leases ->
-              t.configuration.dhcp_leases <- leases;
-              Logs.debug (fun m ->
-                  m "Received packet %a - updated lease database"
-                    Dhcp_wire.pp_pkt pkt);
-              Lwt.return_unit
-          | Dhcp_server.Input.Warning w ->
-              Logs.warn (fun m -> m "%s" w);
-              Lwt.return_unit
-          | Dhcp_server.Input.Error e ->
-              Logs.err (fun m -> m "%s" e);
-              Lwt.return_unit
-          | Dhcp_server.Input.Reply (reply, leases) ->
-              t.configuration.dhcp_leases <- leases;
-              Logs.debug (fun m -> m "Received packet %a" Dhcp_wire.pp_pkt pkt);
-              N.write t.net
-                ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet)
-                (Dhcp_wire.pkt_into_buf reply)
-              >|= fun _ ->
-              Logs.debug (fun m ->
-                  m "Sent reply packet %a" Dhcp_wire.pp_pkt reply))
-
-    let listen t ~header_size net =
-      let dhcp_or_not buf =
-        let of_interest hdr =
-          let dst = hdr.Ethernet.Packet.destination in
-          Macaddr.compare dst (N.mac t.net) = 0 || not (Macaddr.is_unicast dst)
-        in
-        match t.configuration.dhcp_configuration with
-        | None -> net buf
-        | Some config -> (
-            match Ethernet.Packet.of_cstruct buf with
-            | Ok (eth_header, _)
-              when of_interest eth_header
-                   && Dhcp_wire.is_dhcp buf (Cstruct.length buf) ->
-                handle_dhcp t config buf
-            | _ -> net buf)
-      in
-      N.listen t.net ~header_size dhcp_or_not
-
-    let connect net configuration = { net; configuration }
-
-    let disconnect _ =
-      Logs.warn (fun m -> m "ignoring disconnect");
-      Lwt.return_unit
-
-    let mac t = N.mac t.net
-    let mtu t = N.mtu t.net
-    let get_stats_counters t = N.get_stats_counters t.net
-    let reset_stats_counters t = N.reset_stats_counters t.net
-  end
-
-  module ETH = Ethernet.Make (Net)
-  module ARP = Arp.Make (ETH)
-  module IPV4 = Static_ipv4.Make (ETH) (ARP)
-  module IPV6 = Ipv6.Make (Net) (ETH)
-  module IPV4V6 = Tcpip_stack_direct.IPV4V6 (IPV4) (IPV6)
-  module ICMP = Icmpv4.Make (IPV4)
-  module UDP = Udp.Make (IPV4V6)
-  module TCP = Tcp.Flow.Make (IPV4V6)
-
-  module S =
-    Tcpip_stack_direct.MakeV4V6 (Net) (ETH) (ARP) (IPV4V6) (ICMP) (UDP) (TCP)
-
-  module Resolver = Dns_resolver_mirage.Make (S)
-  module Stub = Dns_stub_mirage.Make (S)
-  module HTTP = Paf_mirage.Make (TCP)
-  module HE = Happy_eyeballs_mirage.Make (S)
-  module Dns_client = Dns_client_mirage.Make (S) (HE)
-  module Mimic_he = Mimic_happy_eyeballs.Make (S) (HE) (Dns_client)
-  module Http_client = Http_mirage_client.Make (TCP) (Mimic_he)
-  module Map = Map.Make (String)
 
   let lookup_src_by_name name =
     List.find_opt (fun src -> Metrics.Src.name src = name) (Metrics.Src.list ())
@@ -527,8 +530,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Logs.err (fun m -> m "password-auth: No password in http request");
           Some (`Authenticate ("User didn't provide a password", None))
 
-    let web_ui_handler t resolver js_file system_password req_method path
-        auth_password =
+    let web_ui_handler t js_file system_password req_method path auth_password =
       let get_multipart_body content_type_header data field =
         let content_type =
           Option.fold ~none:"application/x-www-form-urlencoded\r\n"
@@ -608,7 +610,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (live, free)
           in
           let domains_on_blocklist =
-            Blocklist.number_of_blocked_domains (Resolver.primary_data resolver)
+            Blocklist.number_of_blocked_domains
+              (Resolver.primary_data t.resolver)
           in
           let content =
             Statistics.statistics_page resolv_stats dns_cache_stats
@@ -623,7 +626,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `GET, "/blocklist" ->
           let content =
             Blocklist.block_page
-              (Blocklist.blocked_domains (Resolver.primary_data resolver))
+              (Blocklist.blocked_domains (Resolver.primary_data t.resolver))
           in
           authenticate_user ~auth_password ~system_password
             (Some (`Content (Dashboard.dashboard_layout ~content (), None)))
@@ -646,13 +649,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                         m "client wanted to add a bad domain: %s" e);
                     Some (`Bad_request ("/blocklist", None))
                 | Ok domain ->
-                    let trie = Resolver.primary_data resolver in
+                    let trie = Resolver.primary_data t.resolver in
                     let trie =
                       Dns_trie.insert domain Dns.Rr_map.Soa
                         (Blocklist.soa "web-ui" 0l)
                         trie
                     in
-                    Resolver.update_primary_data resolver trie;
+                    Resolver.update_primary_data t.resolver trie;
                     Some (`Redirect ("/blocklist", None)))
             | Error (`Msg e) ->
                 Logs.err (fun m -> m "multipart-form error: %s" e);
@@ -683,9 +686,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
              match Domain_name.of_string domain with
              | Error _ -> None
              | Ok domain ->
-                 let trie = Resolver.primary_data resolver in
+                 let trie = Resolver.primary_data t.resolver in
                  let trie = Dns_trie.remove_all domain trie in
-                 Resolver.update_primary_data resolver trie;
+                 Resolver.update_primary_data t.resolver trie;
                  Some (`Redirect ("/blocklist", None)))
       | `POST _, "/blocklist/update" ->
           Some (`Redirect ("/blocklist", Some `Update))
@@ -724,7 +727,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let request : type reqd headers request response ro wo.
         _ ->
         _ ->
-        _ ->
         HTTP.TLS.flow ->
         Ipaddr.t * int ->
         reqd ->
@@ -732,7 +734,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         string ->
         string option ->
         unit =
-     fun t resolver mvar _flow (dst, port) reqd protocol js_file password ->
+     fun t mvar _flow (dst, port) reqd protocol js_file password ->
       match protocol with
       | Alpn.HTTP_1_1 (module Reqd) ->
           Lwt.async (fun () ->
@@ -791,7 +793,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler t resolver js_file password meth
+                      ( web_ui_handler t js_file password meth
                           request.H1.Request.target auth_password,
                         meth ))
               >>= function
@@ -890,7 +892,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt.async (fun () ->
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler t resolver js_file password meth
+                      ( web_ui_handler t js_file password meth
                           request.H2.Request.target auth_password,
                         meth ))
               >|= function
@@ -933,7 +935,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       Logs.info (fun m -> m "%s" query);
                       let query = Base64.decode_exn ~pad:false query in
                       let resolve () =
-                        Resolver.resolve_external resolver (dst, port) query
+                        Resolver.resolve_external t.resolver (dst, port) query
                         >>= fun (ttl, answer) ->
                         reply ~content_type:"application/dns-message"
                           ~headers:
@@ -945,7 +947,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   | `POST (_content_type, data), path
                     when String.starts_with ~prefix:"/dns-query" path ->
                       let resolve () =
-                        Resolver.resolve_external resolver (dst, port) data
+                        Resolver.resolve_external t.resolver (dst, port) data
                         >>= fun (ttl, answer) ->
                         reply ~content_type:"application/dns-message"
                           ~headers:
@@ -967,12 +969,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   let resp = H2.Response.create ~headers status in
                   Reqd.respond_with_string reqd resp "")
 
-    let handler t resolver mvar js_file password =
+    let handler t mvar js_file password =
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request t resolver mvar flow dst reqd protocol js_file password);
+            request t mvar flow dst reqd protocol js_file password);
       }
 
     let update_blocklist http_client resolver =
@@ -1053,7 +1055,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       (mvar, loop (K.dns_blocklist ()) [] (one_week ()))
 
-    let start_resolver t stack tcp resolver http_client js_file password =
+    let start_resolver t stack tcp http_client js_file password =
       let fresh_tls () =
         let ca = CA.make (K.name ()) (Option.get (K.ca_key ())) in
         let cert, pk = Result.get_ok ca in
@@ -1068,7 +1070,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         let tls = Result.get_ok tls in
         (cert, dns_tls, tls)
       in
-      let rec go (certificate, dns_tls, tls) resolver mvar =
+      let rec go (certificate, dns_tls, tls) mvar =
         let seven_days_before_expire =
           let _, expiring = X509.Certificate.validity certificate in
           let diff = Ptime.diff expiring (Mirage_ptime.now ()) in
@@ -1080,32 +1082,28 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Mirage_sleep.ns seven_days_before_expire >>= fun () ->
           Lwt_switch.turn_off stop
         in
-        Resolver.update_tls resolver dns_tls;
-        let h2 =
-          HTTP.alpn_service ~tls (handler t resolver mvar js_file password)
-        in
+        Resolver.update_tls t.resolver dns_tls;
+        let h2 = HTTP.alpn_service ~tls (handler t mvar js_file password) in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         (* Due to the Lwt_switch [stop] [bell] will shut down the web server so
            we can safely wait for both. *)
-        Lwt.both (bell ()) th >>= fun _ -> go (fresh_tls ()) resolver mvar
+        Lwt.both (bell ()) th >>= fun _ -> go (fresh_tls ()) mvar
       in
       if K.no_tls () then
-        let resolver = Resolver.resolver stack ~root:true resolver in
-        let mvar, th = update_blocklist http_client resolver in
+        let mvar, th = update_blocklist http_client t.resolver in
         th
       else
         let cert, dns_tls, tls = fresh_tls () in
-        let resolver =
-          Resolver.resolver stack ~root:true ~tls:dns_tls resolver
-        in
-        let mvar, th = update_blocklist http_client resolver in
-        Lwt.join [ th; go (cert, dns_tls, tls) resolver mvar ]
+        Resolver.update_tls t.resolver dns_tls;
+        let mvar, th = update_blocklist http_client t.resolver in
+        Lwt.join [ th; go (cert, dns_tls, tls) mvar ]
   end
 
   let start net assets =
-    let t = of_commandline (N.mac net) () in
-    let net = Net.connect net t in
+    let mac = N.mac net in
+    let configuration, dhcp_config = of_commandline mac () in
+    let net = Net.connect net dhcp_config in
     ETH.connect net >>= fun eth ->
     ARP.connect eth >>= fun arp ->
     ARP.add_ip arp (Ipaddr.V4.Prefix.address (K.ipv4 ())) >>= fun () ->
@@ -1227,6 +1225,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (Mirage_mtime.elapsed_ns ())
             Mirage_crypto_rng.generate primary_t
         in
+        let resolver = Resolver.resolver stack ~root:true resolver in
+        let t = { net; mac; configuration; resolver } in
         let password = K.password () in
         (match password with
         | None ->
@@ -1251,8 +1251,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         | Error _e -> invalid_arg "JS file could not be loaded"
         | Ok js_file ->
             Lwt.async (fun () ->
-                Daemon.start_resolver t stack tcp resolver http_client js_file
-                  password);
+                Daemon.start_resolver t stack tcp http_client js_file password);
             Lwt.return_unit)
     | Some ns -> (
         Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
