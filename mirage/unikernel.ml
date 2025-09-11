@@ -241,19 +241,17 @@ module K = struct
           Ok (str, `RSA (Mirage_crypto_pk.Rsa.generate ~g ~bits:4096 ()))
     in
     let pp ppf (str, _) = Fmt.string ppf str in
-    let arg =
-      let open Arg in
-      value
-      & opt (some (conv (parser, pp))) None
-      & info [ "ca-seed" ] ~doc:ca_key_doc
-    in
-    Mirage_runtime.register_arg arg
+    Mirage_runtime.register_arg
+      Arg.(
+        value
+        & opt (some (conv (parser, pp))) None
+        & info [ "ca-seed" ] ~doc:ca_key_doc)
 
   let password =
     let doc = Arg.info ~doc:"Password used for authentication" [ "password" ] in
     Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 
-  let name_k =
+  let hostname =
     let ( let* ) = Result.bind in
     let parser str =
       let* dn = Domain_name.of_string str in
@@ -261,14 +259,38 @@ module K = struct
     in
     let pp = Domain_name.pp in
     let domain_name = Arg.conv (parser, pp) in
-    let doc = "The name (and the SNI for the certificate) of the unikernel." in
-    let open Arg in
-    required
-    & opt (some domain_name)
-        (Some Domain_name.(of_string_exn "dnsvizor" |> host_exn))
-    & info [ "name" ] ~doc
+    let doc =
+      "The hostname (SNI for the certificate, entry in DNS) of the unikernel."
+    in
+    Mirage_runtime.register_arg
+      Arg.(
+        required
+        & opt (some domain_name)
+            (Some Domain_name.(of_string_exn "dnsvizor" |> host_exn))
+        & info [ "hostname" ] ~doc)
 
-  let name = Mirage_runtime.register_arg name_k
+  let key_v =
+    Arg.conv ~docv:"HOST:HASH:DATA"
+      Dns.Dnskey.
+        (name_key_of_string, fun ppf v -> Fmt.string ppf (name_key_to_string v))
+
+  let dns_key =
+    let doc =
+      "The nsupdate key to use for updating the name server whenever a client \
+       requests this (via DHCP FQDN, RFC 4702)"
+    in
+    Mirage_runtime.register_arg
+      Arg.(value & opt (some key_v) None & info ~doc [ "dns-key" ])
+
+  let dns_server =
+    let doc =
+      "The IP address of the DNS server to update with new host names"
+    in
+    Mirage_runtime.register_arg
+      Arg.(
+        value
+        & opt (some Mirage_runtime_network.Arg.ip_address) None
+        & info ~doc [ "dns-server" ])
 end
 
 module Net (N : Mirage_net.S) = struct
@@ -288,6 +310,10 @@ module Net (N : Mirage_net.S) = struct
     net : N.t;
     mutable config : Dhcp_server.Config.t option;
     mutable leases : Dhcp_server.Lease.database;
+    mutable lease_acquired :
+      Dhcp_server.Lease.t ->
+      Dhcp_wire.dhcp_option list ->
+      (Dhcp_wire.dhcp_option list, unit) result Lwt.t;
   }
 
   let write t = N.write t.net
@@ -303,7 +329,8 @@ module Net (N : Mirage_net.S) = struct
         in
         match Dhcp_server.Input.input_pkt config t.leases pkt now with
         | Dhcp_server.Input.Silence -> Lwt.return_unit
-        | Dhcp_server.Input.Update leases ->
+        | Dhcp_server.Input.Update (_lease_opt, leases) ->
+            (* if lease_opt is present, the lease got removed! *)
             t.leases <- leases;
             Logs.debug (fun m ->
                 m "Received packet %a - updated lease database" Dhcp_wire.pp_pkt
@@ -315,15 +342,35 @@ module Net (N : Mirage_net.S) = struct
         | Dhcp_server.Input.Error e ->
             Logs.err (fun m -> m "%s" e);
             Lwt.return_unit
-        | Dhcp_server.Input.Reply (reply, leases) ->
-            t.leases <- leases;
-            Logs.debug (fun m -> m "Received packet %a" Dhcp_wire.pp_pkt pkt);
-            N.write t.net
-              ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet)
-              (Dhcp_wire.pkt_into_buf reply)
-            >|= fun _ ->
-            Logs.debug (fun m ->
-                m "Sent reply packet %a" Dhcp_wire.pp_pkt reply))
+        | Dhcp_server.Input.Reply (reply, lease_opt, leases) -> (
+            (match lease_opt with
+            | None -> Lwt.return (Ok reply)
+            | Some (lease, opts) -> (
+                Logs.info (fun m ->
+                    m "Handing out lease %s, received options %a"
+                      (Dhcp_server.Lease.to_string lease)
+                      Fmt.(list ~sep:(any ", ") string)
+                      (List.map Dhcp_wire.dhcp_option_to_string opts));
+                t.lease_acquired lease opts >>= function
+                | Ok options ->
+                    let reply =
+                      Dhcp_wire.{ reply with options = reply.options @ options }
+                    in
+                    Lwt.return (Ok reply)
+                | Error _ as e -> Lwt.return e))
+            >>= function
+            | Error () -> Lwt.return_unit
+            | Ok reply -> (
+                Logs.info (fun m -> m "Sending reply %a" Dhcp_wire.pp_pkt reply);
+                t.leases <- leases;
+                N.write t.net
+                  ~size:(N.mtu t.net + Ethernet.Packet.sizeof_ethernet)
+                  (Dhcp_wire.pkt_into_buf reply)
+                >|= function
+                | Ok () -> ()
+                | Error ne ->
+                    Logs.err (fun m ->
+                        m "got a network error: %a" N.pp_error ne))))
 
   let listen t ~header_size net =
     let dhcp_or_not buf =
@@ -345,7 +392,8 @@ module Net (N : Mirage_net.S) = struct
 
   let connect net config =
     let leases = Dhcp_server.Lease.make_db () in
-    { net; config; leases }
+    let lease_acquired _ _ = Lwt.return (Ok []) in
+    { net; config; leases; lease_acquired }
 
   let disconnect _ =
     Logs.warn (fun m -> m "ignoring disconnect");
@@ -1057,7 +1105,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
     let start_resolver t stack tcp http_client js_file password =
       let fresh_tls () =
-        let ca = CA.make (K.name ()) (Option.get (K.ca_key ())) in
+        let ca = CA.make (K.hostname ()) (Option.get (K.ca_key ())) in
         let cert, pk = Result.get_ok ca in
         let own_cert = `Single ([ cert ], pk) in
         let dns_tls =
@@ -1099,6 +1147,173 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         let mvar, th = update_blocklist http_client t.resolver in
         Lwt.join [ th; go (cert, dns_tls, tls) mvar ]
   end
+
+  let update_dns tcp lease name =
+    match (K.dns_key (), K.dns_server ()) with
+    | Some (key_name, key), Some ip ->
+        let open Dns in
+        let key_domain = Domain_name.drop_label_exn ~amount:2 key_name in
+        if Domain_name.is_subdomain ~subdomain:name ~domain:key_domain then
+          let update =
+            let actions =
+              let a =
+                (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
+              in
+              Packet.Update.[ Remove Rr_map.(K A); Add Rr_map.(B (A, a)) ]
+            in
+            let update = Domain_name.Map.singleton name actions in
+            (Domain_name.Map.empty, update)
+          in
+          let zone = Packet.Question.create key_domain Rr_map.Soa
+          and header =
+            (Randomconv.int16 Mirage_crypto_rng.generate, Packet.Flags.empty)
+          in
+          let packet = Packet.create header zone (`Update update) in
+          match
+            Dns_tsig.encode_and_sign ~proto:`Tcp packet (Mirage_ptime.now ())
+              key key_name
+          with
+          | Error s ->
+              Logs.err (fun m ->
+                  m "Error %a while encoding and signing %a" Dns_tsig.pp_s s
+                    Domain_name.pp name);
+              Lwt.return []
+          | Ok (data, mac) -> (
+              S.TCP.create_connection tcp (ip, 53) >>= function
+              | Error e ->
+                  Logs.err (fun m ->
+                      m "cannot reach the DNS server %a: %a" Ipaddr.pp ip
+                        S.TCP.pp_error e);
+                  Lwt.return []
+              | Ok flow -> (
+                  let len = Cstruct.create 2 in
+                  Cstruct.BE.set_uint16 len 0 (String.length data);
+                  S.TCP.write flow (Cstruct.append len (Cstruct.of_string data))
+                  >>= function
+                  | Error e ->
+                      Logs.err (fun m ->
+                          m "Failed to write to DNS server %a: %a" Ipaddr.pp ip
+                            S.TCP.pp_write_error e);
+                      Lwt.return []
+                  | Ok () -> (
+                      S.TCP.read flow >>= function
+                      | Error e ->
+                          Logs.err (fun m ->
+                              m "Failed to read to DNS server %a: %a" Ipaddr.pp
+                                ip S.TCP.pp_error e);
+                          Lwt.return []
+                      | Ok `Eof ->
+                          Logs.err (fun m ->
+                              m "Expected an answer from DNS server %a, got eof"
+                                Ipaddr.pp ip);
+                          Lwt.return []
+                      | Ok (`Data data) ->
+                          if Cstruct.length data >= 2 then
+                            let len = Cstruct.BE.get_uint16 data 0 in
+                            if Cstruct.length data >= 2 + len then
+                              let dns_packet =
+                                Cstruct.to_string ~off:2 ~len data
+                              in
+                              match
+                                Dns_tsig.decode_and_verify (Mirage_ptime.now ())
+                                  key key_name ~mac dns_packet
+                              with
+                              | Error e ->
+                                  Logs.err (fun m ->
+                                      m
+                                        "error %a while decoding nsupdate \
+                                         answer %a"
+                                        Dns_tsig.pp_e e Domain_name.pp name);
+                                  Lwt.return []
+                              | Ok (res, _, _) -> (
+                                  match
+                                    Packet.reply_matches_request ~request:packet
+                                      res
+                                  with
+                                  | Ok `Update_ack ->
+                                      Logs.info (fun m ->
+                                          m "successfully updated DNS");
+                                      let options =
+                                        [
+                                          Dhcp_wire.Client_fqdn
+                                            ([ `Overriden ], name);
+                                        ]
+                                      in
+                                      Lwt.return options
+                                  | Ok e ->
+                                      Logs.warn (fun m ->
+                                          m
+                                            "failed to update DNS, unexpected \
+                                             reply: %a"
+                                            Dns.Packet.pp_reply e);
+                                      Lwt.return []
+                                  | Error e ->
+                                      Logs.err (fun m ->
+                                          m "invalid reply %a for %a, got %a"
+                                            Packet.pp_mismatch e Packet.pp
+                                            packet Packet.pp res);
+                                      Lwt.return [])
+                            else (
+                              Logs.warn (fun m -> m "received short DNS reply");
+                              Lwt.return [])
+                          else (
+                            Logs.warn (fun m ->
+                                m "received a too short DNS reply");
+                            Lwt.return []))))
+        else (
+          Logs.warn (fun m ->
+              m "Requested a DNS update with %a, but key domain is %a"
+                Domain_name.pp name Domain_name.pp key_domain);
+          Lwt.return [])
+    | None, _ ->
+        Logs.info (fun m -> m "no DNS key provided");
+        Lwt.return []
+    | _, None ->
+        Logs.info (fun m -> m "no DNS server IP provided");
+        Lwt.return []
+
+  let dhcp_lease_cb tcp resolver lease options =
+    (match
+       ( List.find_opt
+           (function Dhcp_wire.Hostname _ -> true | _ -> false)
+           options,
+         K.domain () )
+     with
+    | Some (Hostname name), Some (domain, _) -> (
+        match Domain_name.prepend_label domain name with
+        | Ok fqdn ->
+            Logs.info (fun m -> m "recording %a" Domain_name.pp fqdn);
+            let trie = Resolver.primary_data resolver in
+            let a_record =
+              (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
+            in
+            let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
+            Resolver.update_primary_data resolver trie
+        | Error (`Msg msg) ->
+            Logs.warn (fun m ->
+                m "couldn't construct a domain name from %S and %a: %s" name
+                  Domain_name.pp domain msg))
+    | None, _ -> Logs.info (fun m -> m "no Hostname found in the DHCP request")
+    | _, None ->
+        Logs.info (fun m ->
+            m "no domain provided (via --domain), not registering any names")
+    | _ ->
+        Logs.info (fun m ->
+            m "no Hostname or nor domain found in the DHCP request"));
+    (match
+       List.find_opt
+         (function Dhcp_wire.Client_fqdn _ -> true | _ -> false)
+         options
+     with
+    | Some (Dhcp_wire.Client_fqdn (flags, name)) ->
+        if List.mem `Server_A flags && not (List.mem `No_update flags) then
+          update_dns tcp lease name
+        else Lwt.return []
+    | None ->
+        Logs.info (fun m -> m "no client FQDN requested");
+        Lwt.return []
+    | Some _ -> assert false)
+    >>= fun options -> Lwt.return (Ok options)
 
   let start net assets =
     let mac = N.mac net in
@@ -1158,19 +1373,19 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       let trie =
         let domain, fqdn =
           match K.domain () with
-          | None -> (K.name (), K.name ())
+          | None -> (K.hostname (), K.hostname ())
           | Some (d, _) -> (
               match
                 ( Domain_name.host d,
                   Result.bind
-                    (Domain_name.append (K.name ()) d)
+                    (Domain_name.append (K.hostname ()) d)
                     Domain_name.host )
               with
               | Ok d, Ok fqdn -> (d, fqdn)
               | _, Error (`Msg m) ->
                   Logs.err (fun m ->
                       m "Couldn't figure the FQDN from host %a and domain %a"
-                        Domain_name.pp (K.name ()) Domain_name.pp d);
+                        Domain_name.pp (K.hostname ()) Domain_name.pp d);
                   exit Mirage_runtime.argument_error
               | Error (`Msg m), _ ->
                   Logs.err (fun m ->
@@ -1226,6 +1441,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Mirage_crypto_rng.generate primary_t
         in
         let resolver = Resolver.resolver stack ~root:true resolver in
+        net.lease_acquired <- dhcp_lease_cb tcp resolver;
         let t = { net; mac; configuration; resolver } in
         let password = K.password () in
         (match password with
