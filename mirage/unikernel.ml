@@ -1148,6 +1148,173 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         Lwt.join [ th; go (cert, dns_tls, tls) mvar ]
   end
 
+  let update_dns tcp lease name =
+    match (K.dns_key (), K.dns_server ()) with
+    | Some (key_name, key), Some ip ->
+        let open Dns in
+        let key_domain = Domain_name.drop_label_exn ~amount:2 key_name in
+        if Domain_name.is_subdomain ~subdomain:name ~domain:key_domain then
+          let update =
+            let actions =
+              let a =
+                (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
+              in
+              Packet.Update.[ Remove Rr_map.(K A); Add Rr_map.(B (A, a)) ]
+            in
+            let update = Domain_name.Map.singleton name actions in
+            (Domain_name.Map.empty, update)
+          in
+          let zone = Packet.Question.create key_domain Rr_map.Soa
+          and header =
+            (Randomconv.int16 Mirage_crypto_rng.generate, Packet.Flags.empty)
+          in
+          let packet = Packet.create header zone (`Update update) in
+          match
+            Dns_tsig.encode_and_sign ~proto:`Tcp packet (Mirage_ptime.now ())
+              key key_name
+          with
+          | Error s ->
+              Logs.err (fun m ->
+                  m "Error %a while encoding and signing %a" Dns_tsig.pp_s s
+                    Domain_name.pp name);
+              Lwt.return []
+          | Ok (data, mac) -> (
+              S.TCP.create_connection tcp (ip, 53) >>= function
+              | Error e ->
+                  Logs.err (fun m ->
+                      m "cannot reach the DNS server %a: %a" Ipaddr.pp ip
+                        S.TCP.pp_error e);
+                  Lwt.return []
+              | Ok flow -> (
+                  let len = Cstruct.create 2 in
+                  Cstruct.BE.set_uint16 len 0 (String.length data);
+                  S.TCP.write flow (Cstruct.append len (Cstruct.of_string data))
+                  >>= function
+                  | Error e ->
+                      Logs.err (fun m ->
+                          m "Failed to write to DNS server %a: %a" Ipaddr.pp ip
+                            S.TCP.pp_write_error e);
+                      Lwt.return []
+                  | Ok () -> (
+                      S.TCP.read flow >>= function
+                      | Error e ->
+                          Logs.err (fun m ->
+                              m "Failed to read to DNS server %a: %a" Ipaddr.pp
+                                ip S.TCP.pp_error e);
+                          Lwt.return []
+                      | Ok `Eof ->
+                          Logs.err (fun m ->
+                              m "Expected an answer from DNS server %a, got eof"
+                                Ipaddr.pp ip);
+                          Lwt.return []
+                      | Ok (`Data data) ->
+                          if Cstruct.length data >= 2 then
+                            let len = Cstruct.BE.get_uint16 data 0 in
+                            if Cstruct.length data >= 2 + len then
+                              let dns_packet =
+                                Cstruct.to_string ~off:2 ~len data
+                              in
+                              match
+                                Dns_tsig.decode_and_verify (Mirage_ptime.now ())
+                                  key key_name ~mac dns_packet
+                              with
+                              | Error e ->
+                                  Logs.err (fun m ->
+                                      m
+                                        "error %a while decoding nsupdate \
+                                         answer %a"
+                                        Dns_tsig.pp_e e Domain_name.pp name);
+                                  Lwt.return []
+                              | Ok (res, _, _) -> (
+                                  match
+                                    Packet.reply_matches_request ~request:packet
+                                      res
+                                  with
+                                  | Ok `Update_ack ->
+                                      Logs.info (fun m ->
+                                          m "successfully updated DNS");
+                                      let options =
+                                        [
+                                          Dhcp_wire.Client_fqdn
+                                            ([ `Overriden ], name);
+                                        ]
+                                      in
+                                      Lwt.return options
+                                  | Ok e ->
+                                      Logs.warn (fun m ->
+                                          m
+                                            "failed to update DNS, unexpected \
+                                             reply: %a"
+                                            Dns.Packet.pp_reply e);
+                                      Lwt.return []
+                                  | Error e ->
+                                      Logs.err (fun m ->
+                                          m "invalid reply %a for %a, got %a"
+                                            Packet.pp_mismatch e Packet.pp
+                                            packet Packet.pp res);
+                                      Lwt.return [])
+                            else (
+                              Logs.warn (fun m -> m "received short DNS reply");
+                              Lwt.return [])
+                          else (
+                            Logs.warn (fun m ->
+                                m "received a too short DNS reply");
+                            Lwt.return []))))
+        else (
+          Logs.warn (fun m ->
+              m "Requested a DNS update with %a, but key domain is %a"
+                Domain_name.pp name Domain_name.pp key_domain);
+          Lwt.return [])
+    | None, _ ->
+        Logs.info (fun m -> m "no DNS key provided");
+        Lwt.return []
+    | _, None ->
+        Logs.info (fun m -> m "no DNS server IP provided");
+        Lwt.return []
+
+  let dhcp_lease_cb tcp resolver lease options =
+    (match
+       ( List.find_opt
+           (function Dhcp_wire.Hostname _ -> true | _ -> false)
+           options,
+         K.domain () )
+     with
+    | Some (Hostname name), Some (domain, _) -> (
+        match Domain_name.prepend_label domain name with
+        | Ok fqdn ->
+            Logs.info (fun m -> m "recording %a" Domain_name.pp fqdn);
+            let trie = Resolver.primary_data resolver in
+            let a_record =
+              (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
+            in
+            let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
+            Resolver.update_primary_data resolver trie
+        | Error (`Msg msg) ->
+            Logs.warn (fun m ->
+                m "couldn't construct a domain name from %S and %a: %s" name
+                  Domain_name.pp domain msg))
+    | None, _ -> Logs.info (fun m -> m "no Hostname found in the DHCP request")
+    | _, None ->
+        Logs.info (fun m ->
+            m "no domain provided (via --domain), not registering any names")
+    | _ ->
+        Logs.info (fun m ->
+            m "no Hostname or nor domain found in the DHCP request"));
+    (match
+       List.find_opt
+         (function Dhcp_wire.Client_fqdn _ -> true | _ -> false)
+         options
+     with
+    | Some (Dhcp_wire.Client_fqdn (flags, name)) ->
+        if List.mem `Server_A flags && not (List.mem `No_update flags) then
+          update_dns tcp lease name
+        else Lwt.return []
+    | None ->
+        Logs.info (fun m -> m "no client FQDN requested");
+        Lwt.return []
+    | Some _ -> assert false)
+    >>= fun options -> Lwt.return (Ok options)
+
   let start net assets =
     let mac = N.mac net in
     let configuration, dhcp_config = of_commandline mac () in
@@ -1274,196 +1441,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Mirage_crypto_rng.generate primary_t
         in
         let resolver = Resolver.resolver stack ~root:true resolver in
-        let dhcp_lease_cb lease options =
-          (match
-             ( List.find_opt
-                 (function Dhcp_wire.Hostname _ -> true | _ -> false)
-                 options,
-               K.domain () )
-           with
-          | Some (Hostname name), Some (domain, _) -> (
-              match Domain_name.prepend_label domain name with
-              | Ok fqdn ->
-                  Logs.info (fun m -> m "recording %a" Domain_name.pp fqdn);
-                  let trie = Resolver.primary_data resolver in
-                  let a_record =
-                    (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
-                  in
-                  let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
-                  Resolver.update_primary_data resolver trie
-              | Error (`Msg msg) ->
-                  Logs.warn (fun m ->
-                      m "couldn't construct a domain name from %S and %a: %s"
-                        name Domain_name.pp domain msg))
-          | None, _ ->
-              Logs.info (fun m -> m "no Hostname found in the DHCP request")
-          | _, None ->
-              Logs.info (fun m ->
-                  m
-                    "no domain provided (via --domain), not registering any \
-                     names")
-          | _ ->
-              Logs.info (fun m ->
-                  m "no Hostname or nor domain found in the DHCP request"));
-          (match
-             ( List.find_opt
-                 (function Dhcp_wire.Client_fqdn _ -> true | _ -> false)
-                 options,
-               K.dns_key (),
-               K.dns_server () )
-           with
-          | ( Some (Dhcp_wire.Client_fqdn (flags, name)),
-              Some (key_name, key),
-              Some ip ) ->
-              if List.mem `Server_A flags && not (List.mem `No_update flags)
-              then
-                let open Dns in
-                let key_domain =
-                  Domain_name.drop_label_exn ~amount:2 key_name
-                in
-                if Domain_name.is_subdomain ~subdomain:name ~domain:key_domain
-                then
-                  let update =
-                    let actions =
-                      Packet.Update.
-                        [
-                          Remove Rr_map.(K A);
-                          Add
-                            Rr_map.(
-                              B (A, (3600l, Ipaddr.V4.Set.singleton lease.addr)));
-                        ]
-                    in
-                    let update = Domain_name.Map.singleton name actions in
-                    (Domain_name.Map.empty, update)
-                  in
-                  let zone = Packet.Question.create key_domain Rr_map.Soa
-                  and header =
-                    ( Randomconv.int16 Mirage_crypto_rng.generate,
-                      Packet.Flags.empty )
-                  in
-                  let packet = Packet.create header zone (`Update update) in
-                  match
-                    Dns_tsig.encode_and_sign ~proto:`Tcp packet
-                      (Mirage_ptime.now ()) key key_name
-                  with
-                  | Error s ->
-                      Logs.err (fun m ->
-                          m "Error %a while encoding and signing %a"
-                            Dns_tsig.pp_s s Domain_name.pp name);
-                      Lwt.return []
-                  | Ok (data, mac) -> (
-                      S.TCP.create_connection tcp (ip, 53) >>= function
-                      | Error e ->
-                          Logs.err (fun m ->
-                              m "cannot reach the DNS server %a: %a" Ipaddr.pp
-                                ip S.TCP.pp_error e);
-                          Lwt.return []
-                      | Ok flow -> (
-                          let len = Cstruct.create 2 in
-                          Cstruct.BE.set_uint16 len 0 (String.length data);
-
-                          S.TCP.write flow
-                            (Cstruct.append len (Cstruct.of_string data))
-                          >>= function
-                          | Error e ->
-                              Logs.err (fun m ->
-                                  m "Failed to write to DNS server %a: %a"
-                                    Ipaddr.pp ip S.TCP.pp_write_error e);
-                              Lwt.return []
-                          | Ok () -> (
-                              S.TCP.read flow >>= function
-                              | Error e ->
-                                  Logs.err (fun m ->
-                                      m "Failed to read to DNS server %a: %a"
-                                        Ipaddr.pp ip S.TCP.pp_error e);
-                                  Lwt.return []
-                              | Ok `Eof ->
-                                  Logs.err (fun m ->
-                                      m
-                                        "Expected an answer from DNS server \
-                                         %a, got eof"
-                                        Ipaddr.pp ip);
-                                  Lwt.return []
-                              | Ok (`Data data) ->
-                                  if Cstruct.length data >= 2 then
-                                    let len = Cstruct.BE.get_uint16 data 0 in
-                                    if Cstruct.length data >= 2 + len then
-                                      let dns_packet =
-                                        Cstruct.to_string ~off:2 ~len data
-                                      in
-                                      match
-                                        Dns_tsig.decode_and_verify
-                                          (Mirage_ptime.now ()) key key_name
-                                          ~mac dns_packet
-                                      with
-                                      | Error e ->
-                                          Logs.err (fun m ->
-                                              m
-                                                "error %a while decoding \
-                                                 nsupdate answer %a"
-                                                Dns_tsig.pp_e e Domain_name.pp
-                                                name);
-                                          Lwt.return []
-                                      | Ok (res, _, _) -> (
-                                          match
-                                            Packet.reply_matches_request
-                                              ~request:packet res
-                                          with
-                                          | Ok `Update_ack ->
-                                              Logs.info (fun m ->
-                                                  m "successfully updated DNS");
-                                              let options =
-                                                [
-                                                  Dhcp_wire.Client_fqdn
-                                                    ([ `Overriden ], name);
-                                                ]
-                                              in
-                                              Lwt.return options
-                                          | Ok e ->
-                                              Logs.warn (fun m ->
-                                                  m
-                                                    "failed to update DNS, \
-                                                     unexpected reply: %a"
-                                                    Dns.Packet.pp_reply e);
-                                              Lwt.return []
-                                          | Error e ->
-                                              Logs.err (fun m ->
-                                                  m
-                                                    "invalid reply %a for %a, \
-                                                     got %a"
-                                                    Packet.pp_mismatch e
-                                                    Packet.pp packet Packet.pp
-                                                    res);
-                                              Lwt.return [])
-                                    else (
-                                      Logs.warn (fun m ->
-                                          m "received short DNS reply");
-                                      Lwt.return [])
-                                  else (
-                                    Logs.warn (fun m ->
-                                        m "received a too short DNS reply");
-                                    Lwt.return []))))
-                else (
-                  Logs.warn (fun m ->
-                      m "Requested a DNS update with %a, but key domain is %a"
-                        Domain_name.pp name Domain_name.pp key_domain);
-                  Lwt.return [])
-              else Lwt.return []
-          | None, _, _ ->
-              Logs.info (fun m -> m "no client FQDN requested");
-              Lwt.return []
-          | _, None, _ ->
-              Logs.info (fun m -> m "no DNS key provided");
-              Lwt.return []
-          | _, _, None ->
-              Logs.info (fun m -> m "no DNS server IP provided");
-              Lwt.return []
-          | _ ->
-              Logs.info (fun m -> m "strange input data for client FQDN");
-              Lwt.return [])
-          >>= fun options -> Lwt.return (Ok options)
-        in
-        net.lease_acquired <- dhcp_lease_cb;
+        net.lease_acquired <- dhcp_lease_cb tcp resolver;
         let t = { net; mac; configuration; resolver } in
         let password = K.password () in
         (match password with
