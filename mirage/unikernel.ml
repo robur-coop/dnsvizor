@@ -241,19 +241,17 @@ module K = struct
           Ok (str, `RSA (Mirage_crypto_pk.Rsa.generate ~g ~bits:4096 ()))
     in
     let pp ppf (str, _) = Fmt.string ppf str in
-    let arg =
-      let open Arg in
-      value
-      & opt (some (conv (parser, pp))) None
-      & info [ "ca-seed" ] ~doc:ca_key_doc
-    in
-    Mirage_runtime.register_arg arg
+    Mirage_runtime.register_arg
+      Arg.(
+        value
+        & opt (some (conv (parser, pp))) None
+        & info [ "ca-seed" ] ~doc:ca_key_doc)
 
   let password =
     let doc = Arg.info ~doc:"Password used for authentication" [ "password" ] in
     Mirage_runtime.register_arg Arg.(value & opt (some string) None doc)
 
-  let name_k =
+  let hostname =
     let ( let* ) = Result.bind in
     let parser str =
       let* dn = Domain_name.of_string str in
@@ -261,14 +259,15 @@ module K = struct
     in
     let pp = Domain_name.pp in
     let domain_name = Arg.conv (parser, pp) in
-    let doc = "The name (and the SNI for the certificate) of the unikernel." in
-    let open Arg in
-    required
-    & opt (some domain_name)
-        (Some Domain_name.(of_string_exn "dnsvizor" |> host_exn))
-    & info [ "name" ] ~doc
-
-  let name = Mirage_runtime.register_arg name_k
+    let doc =
+      "The hostname (SNI for the certificate, entry in DNS) of the unikernel."
+    in
+    Mirage_runtime.register_arg
+      Arg.(
+        required
+        & opt (some domain_name)
+            (Some Domain_name.(of_string_exn "dnsvizor" |> host_exn))
+        & info [ "hostname" ] ~doc)
 
   let key_v =
     Arg.conv ~docv:"HOST:HASH:DATA"
@@ -1106,7 +1105,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
     let start_resolver t stack tcp http_client js_file password =
       let fresh_tls () =
-        let ca = CA.make (K.name ()) (Option.get (K.ca_key ())) in
+        let ca = CA.make (K.hostname ()) (Option.get (K.ca_key ())) in
         let cert, pk = Result.get_ok ca in
         let own_cert = `Single ([ cert ], pk) in
         let dns_tls =
@@ -1207,19 +1206,19 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       let trie =
         let domain, fqdn =
           match K.domain () with
-          | None -> (K.name (), K.name ())
+          | None -> (K.hostname (), K.hostname ())
           | Some (d, _) -> (
               match
                 ( Domain_name.host d,
                   Result.bind
-                    (Domain_name.append (K.name ()) d)
+                    (Domain_name.append (K.hostname ()) d)
                     Domain_name.host )
               with
               | Ok d, Ok fqdn -> (d, fqdn)
               | _, Error (`Msg m) ->
                   Logs.err (fun m ->
                       m "Couldn't figure the FQDN from host %a and domain %a"
-                        Domain_name.pp (K.name ()) Domain_name.pp d);
+                        Domain_name.pp (K.hostname ()) Domain_name.pp d);
                   exit Mirage_runtime.argument_error
               | Error (`Msg m), _ ->
                   Logs.err (fun m ->

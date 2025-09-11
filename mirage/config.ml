@@ -1,4 +1,4 @@
-(* mirage >= 4.9.0 & < 4.10.0 *)
+(* mirage >= 4.10.0 & < 4.11.0 *)
 (* Copyright Robur, 2020 *)
 
 open Mirage
@@ -28,7 +28,7 @@ let dnsvizor =
       package ~min:"7.0.0"
         ~sublibs:[ "ipv4"; "tcp"; "udp"; "icmpv4"; "stack-direct"; "ipv6" ]
         "tcpip";
-      package ~min:"1.6.0" "charrua";
+      package ~min:"2.1.0" "charrua";
       package "charrua-server";
       package ~min:"4.5.0" ~sublibs:[ "network" ] "mirage-runtime";
       package "tyxml";
@@ -64,39 +64,37 @@ let management_stack =
        (netif ~group:"management" "management"))
     (generic_stackv4v6 mynetwork)
 
-let name = runtime_arg ~pos:__POS__ "Unikernel.K.name_k"
-
 let monitoring =
   let monitor = Runtime_arg.(v (monitor None)) in
   let connect _ modname = function
-    | [ stack; name; monitor ] ->
+    | [ stack; monitor ] ->
         code ~pos:__POS__
           "Lwt.return (match %s with| None -> Logs.warn (fun m -> m \"no \
            monitor specified, not outputting statistics\")| Some ip -> \
-           %s.create ip ~hostname:(Domain_name.to_string %s) %s)"
-          monitor modname name stack
+           %s.create ip ~hostname:(Mirage_runtime.name ()) %s)"
+          monitor modname stack
     | _ -> assert false
   in
   impl
     ~packages:[ package ~min:"0.0.6" "mirage-monitoring" ]
-    ~runtime_args:[ name; monitor ] ~connect "Mirage_monitoring.Make"
+    ~runtime_args:[ monitor ] ~connect "Mirage_monitoring.Make"
     (stackv4v6 @-> job)
 
 let syslog =
   let syslog = Runtime_arg.(v (syslog None)) in
   let connect _ modname = function
-    | [ stack; name; syslog ] ->
+    | [ stack; syslog ] ->
         code ~pos:__POS__
           "Lwt.return (match %s with| None -> Logs.warn (fun m -> m \"no \
            syslog specified, dumping on stdout\")| Some ip -> \
-           Logs.set_reporter (%s.create %s ip ~hostname:(Domain_name.to_string \
-           %s) ()))"
-          syslog modname stack name
+           Logs.set_reporter (%s.create %s ip ~hostname:(Mirage_runtime.name \
+           ()) ()))"
+          syslog modname stack
     | _ -> assert false
   in
   impl
     ~packages:[ package ~sublibs:[ "mirage" ] ~min:"0.5.0" "logs-syslog" ]
-    ~runtime_args:[ name; syslog ] ~connect "Logs_syslog_mirage.Udp"
+    ~runtime_args:[ syslog ] ~connect "Logs_syslog_mirage.Udp"
     (stackv4v6 @-> job)
 
 let optional_monitoring stack =
