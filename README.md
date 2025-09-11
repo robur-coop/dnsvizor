@@ -7,7 +7,7 @@ This is a MirageOS unikernel which listens for DNS requests and DHCP requests in
 To install this unikernel from source, you need to have
 [opam](https://opam.ocaml.org) (>= 2.1.0) and
 [ocaml](https://ocaml.org) (>= 4.12.0) installed. Also,
-[mirage](https://mirage.io) is required (>= 4.7.0). Please follow the
+[mirage](https://mirage.io) is required (>= 4.10.0). Please follow the
 [installation instructions](https://mirage.io/wiki/install).
 
 The following steps will clone this git repository and compile the unikernel:
