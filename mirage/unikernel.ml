@@ -291,6 +291,21 @@ module K = struct
         value
         & opt (some Mirage_runtime_network.Arg.ip_address) None
         & info ~doc [ "dns-server" ])
+
+  let tlstunnel_key =
+    let doc =
+      "The shared secret of the TLSTUNNEL server to update with new host names"
+    in
+    Mirage_runtime.register_arg
+      Arg.(value & opt (some string) None & info ~doc [ "tlstunnel-key" ])
+
+  let tlstunnel_server =
+    let doc = "The IP address of the TLSTUNNEL server" in
+    Mirage_runtime.register_arg
+      Arg.(
+        value
+        & opt (some Mirage_runtime_network.Arg.ip_address) None
+        & info ~doc [ "tlstunnel-server" ])
 end
 
 module Net (N : Mirage_net.S) = struct
@@ -1199,8 +1214,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       S.TCP.read flow >>= function
                       | Error e ->
                           Logs.err (fun m ->
-                              m "Failed to read to DNS server %a: %a" Ipaddr.pp
-                                ip S.TCP.pp_error e);
+                              m "Failed to read from DNS server %a: %a"
+                                Ipaddr.pp ip S.TCP.pp_error e);
                           Lwt.return []
                       | Ok `Eof ->
                           Logs.err (fun m ->
@@ -1272,6 +1287,73 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         Logs.info (fun m -> m "no DNS server IP provided");
         Lwt.return []
 
+  let update_tlstunnel tcp lease name =
+    match Domain_name.host name with
+    | Error (`Msg msg) ->
+        Logs.err (fun m ->
+            m "cannot construct a host from %a" Domain_name.pp name);
+        Lwt.return []
+    | Ok name -> (
+        match (K.tlstunnel_key (), K.tlstunnel_server ()) with
+        | Some secret, Some ip -> (
+            let cmd =
+              Tlstunnel.Add (name, Ipaddr.V4 lease.Dhcp_server.Lease.addr, 80)
+            in
+            let data = Tlstunnel.cmd_to_str cmd in
+            S.TCP.create_connection tcp (ip, 1234) >>= function
+            | Error e ->
+                Logs.err (fun m ->
+                    m "cannot reach the TLSTUNNEL server %a: %a" Ipaddr.pp ip
+                      S.TCP.pp_error e);
+                Lwt.return []
+            | Ok flow -> (
+                S.TCP.write flow (Cstruct.of_string data) >>= function
+                | Error e ->
+                    Logs.err (fun m ->
+                        m "Failed to write to TLSTUNNEL server %a: %a" Ipaddr.pp
+                          ip S.TCP.pp_write_error e);
+                    Lwt.return []
+                | Ok () -> (
+                    S.TCP.read flow >|= function
+                    | Error e ->
+                        Logs.err (fun m ->
+                            m "Failed to read from TLSTUNNEL server %a: %a"
+                              Ipaddr.pp ip S.TCP.pp_error e);
+                        []
+                    | Ok `Eof ->
+                        Logs.err (fun m ->
+                            m
+                              "Expected an answer from TLSTUNNEL server %a, \
+                               got eof"
+                              Ipaddr.pp ip);
+                        []
+                    | Ok (`Data data) ->
+                        (match
+                           Tlstunnel.cmd_of_str (Cstruct.to_string data)
+                         with
+                        | Ok (Result (0, _)) ->
+                            Logs.app (fun m ->
+                                m "recorded %a in TLSTUNNEL" Domain_name.pp name)
+                        | Ok (Result (n, msg)) ->
+                            Logs.err (fun m ->
+                                m "failed to record %a in TLSTUNNEL: %u (%s)"
+                                  Domain_name.pp name n msg)
+                        | Ok r ->
+                            Logs.err (fun m ->
+                                m "Expected a result from TLSTUNNEL, got %a"
+                                  Tlstunnel.pp_cmd r)
+                        | Error (`Msg msg) ->
+                            Logs.err (fun m ->
+                                m "error while recording %a in TLSTUNNEL: %s"
+                                  Domain_name.pp name msg));
+                        [])))
+        | None, _ ->
+            Logs.info (fun m -> m "no TLSTUNNEL key provided");
+            Lwt.return []
+        | _, None ->
+            Logs.info (fun m -> m "no TLSTUNNEL server IP provided");
+            Lwt.return [])
+
   let dhcp_lease_cb tcp resolver lease options =
     (match
        ( List.find_opt
@@ -1307,7 +1389,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
      with
     | Some (Dhcp_wire.Client_fqdn (flags, name)) ->
         if List.mem `Server_A flags && not (List.mem `No_update flags) then
-          update_dns tcp lease name
+          update_dns tcp lease name >>= fun r ->
+          update_tlstunnel tcp lease name >>= fun r2 -> Lwt.return (r @ r2)
         else Lwt.return []
     | None ->
         Logs.info (fun m -> m "no client FQDN requested");
