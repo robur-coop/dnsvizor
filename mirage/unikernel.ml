@@ -443,12 +443,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module Http_client = Http_mirage_client.Make (TCP) (Mimic_he)
   module Map = Map.Make (String)
 
-  type t = {
-    net : Net.t;
-    mac : Macaddr.t;
-    mutable configuration : string;
-    resolver : Resolver.t;
-  }
+  type t = { net : Net.t; mac : Macaddr.t; mutable configuration : string }
 
   let dhcp_configuration_of mac dhcp_range domain =
     let v4_address = Ipaddr.V4.Prefix.address (K.ipv4 ()) in
@@ -529,7 +524,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   let lookup_src_by_name name =
     List.find_opt (fun src -> Metrics.Src.name src = name) (Metrics.Src.list ())
 
-  module Daemon = struct
+  module Daemon (Resolver : module type of Dns_resolver_mirage_shared) = struct
     let pp_error ppf = function
       | `Bad_gateway -> Fmt.string ppf "Bad gateway"
       | `Bad_request -> Fmt.string ppf "Bad request"
@@ -593,7 +588,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Logs.err (fun m -> m "password-auth: No password in http request");
           Some (`Authenticate ("User didn't provide a password", None))
 
-    let web_ui_handler t js_file system_password req_method path auth_password =
+    let web_ui_handler t resolver js_file system_password req_method path
+        auth_password =
       let get_multipart_body content_type_header data field =
         let content_type =
           Option.fold ~none:"application/x-www-form-urlencoded\r\n"
@@ -673,8 +669,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (live, free)
           in
           let domains_on_blocklist =
-            Blocklist.number_of_blocked_domains
-              (Resolver.primary_data t.resolver)
+            Blocklist.number_of_blocked_domains (Resolver.primary_data resolver)
           in
           let content =
             Statistics.statistics_page resolv_stats dns_cache_stats
@@ -689,7 +684,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `GET, "/blocklist" ->
           let content =
             Blocklist.block_page
-              (Blocklist.blocked_domains (Resolver.primary_data t.resolver))
+              (Blocklist.blocked_domains (Resolver.primary_data resolver))
           in
           authenticate_user ~auth_password ~system_password
             (Some (`Content (Dashboard.dashboard_layout ~content (), None)))
@@ -712,13 +707,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                         m "client wanted to add a bad domain: %s" e);
                     Some (`Bad_request ("/blocklist", None))
                 | Ok domain ->
-                    let trie = Resolver.primary_data t.resolver in
+                    let trie = Resolver.primary_data resolver in
                     let trie =
                       Dns_trie.insert domain Dns.Rr_map.Soa
                         (Blocklist.soa "web-ui" 0l)
                         trie
                     in
-                    Resolver.update_primary_data t.resolver trie;
+                    Resolver.update_primary_data resolver trie;
                     Some (`Redirect ("/blocklist", None)))
             | Error (`Msg e) ->
                 Logs.err (fun m -> m "multipart-form error: %s" e);
@@ -749,9 +744,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
              match Domain_name.of_string domain with
              | Error _ -> None
              | Ok domain ->
-                 let trie = Resolver.primary_data t.resolver in
+                 let trie = Resolver.primary_data resolver in
                  let trie = Dns_trie.remove_all domain trie in
-                 Resolver.update_primary_data t.resolver trie;
+                 Resolver.update_primary_data resolver trie;
                  Some (`Redirect ("/blocklist", None)))
       | `POST _, "/blocklist/update" ->
           Some (`Redirect ("/blocklist", Some `Update))
@@ -790,6 +785,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let request : type reqd headers request response ro wo.
         _ ->
         _ ->
+        _ ->
         HTTP.TLS.flow ->
         Ipaddr.t * int ->
         reqd ->
@@ -797,7 +793,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         string ->
         string option ->
         unit =
-     fun t mvar _flow (dst, port) reqd protocol js_file password ->
+     fun t resolver mvar _flow (dst, port) reqd protocol js_file password ->
       match protocol with
       | Alpn.HTTP_1_1 (module Reqd) ->
           Lwt.async (fun () ->
@@ -856,7 +852,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler t js_file password meth
+                      ( web_ui_handler t resolver js_file password meth
                           request.H1.Request.target auth_password,
                         meth ))
               >>= function
@@ -955,7 +951,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt.async (fun () ->
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler t js_file password meth
+                      ( web_ui_handler t resolver js_file password meth
                           request.H2.Request.target auth_password,
                         meth ))
               >|= function
@@ -998,7 +994,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       Logs.info (fun m -> m "%s" query);
                       let query = Base64.decode_exn ~pad:false query in
                       let resolve () =
-                        Resolver.resolve_external t.resolver (dst, port) query
+                        Resolver.resolve_external resolver (dst, port) query
                         >>= fun (ttl, answer) ->
                         reply ~content_type:"application/dns-message"
                           ~headers:
@@ -1010,7 +1006,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   | `POST (_content_type, data), path
                     when String.starts_with ~prefix:"/dns-query" path ->
                       let resolve () =
-                        Resolver.resolve_external t.resolver (dst, port) data
+                        Resolver.resolve_external resolver (dst, port) data
                         >>= fun (ttl, answer) ->
                         reply ~content_type:"application/dns-message"
                           ~headers:
@@ -1032,12 +1028,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   let resp = H2.Response.create ~headers status in
                   Reqd.respond_with_string reqd resp "")
 
-    let handler t mvar js_file password =
+    let handler t resolver mvar js_file password =
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request t mvar flow dst reqd protocol js_file password);
+            request t resolver mvar flow dst reqd protocol js_file password);
       }
 
     let update_blocklist http_client resolver =
@@ -1118,7 +1114,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       in
       (mvar, loop (K.dns_blocklist ()) [] (one_week ()))
 
-    let start_resolver t stack tcp http_client js_file password =
+    let start_resolver t resolver stack tcp http_client js_file password =
       let fresh_tls () =
         let ca = CA.make (K.hostname ()) (Option.get (K.ca_key ())) in
         let cert, pk = Result.get_ok ca in
@@ -1145,8 +1141,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Mirage_sleep.ns seven_days_before_expire >>= fun () ->
           Lwt_switch.turn_off stop
         in
-        Resolver.update_tls t.resolver dns_tls;
-        let h2 = HTTP.alpn_service ~tls (handler t mvar js_file password) in
+        Resolver.update_tls resolver dns_tls;
+        let h2 =
+          HTTP.alpn_service ~tls (handler t resolver mvar js_file password)
+        in
         HTTP.init ~port:(K.https_port ()) tcp >>= fun service ->
         let (`Initialized th) = HTTP.serve ~stop h2 service in
         (* Due to the Lwt_switch [stop] [bell] will shut down the web server so
@@ -1154,249 +1152,259 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         Lwt.both (bell ()) th >>= fun _ -> go (fresh_tls ()) mvar
       in
       if K.no_tls () then
-        let mvar, th = update_blocklist http_client t.resolver in
+        let mvar, th = update_blocklist http_client resolver in
         th
       else
         let cert, dns_tls, tls = fresh_tls () in
-        Resolver.update_tls t.resolver dns_tls;
-        let mvar, th = update_blocklist http_client t.resolver in
+        Resolver.update_tls resolver dns_tls;
+        let mvar, th = update_blocklist http_client resolver in
         Lwt.join [ th; go (cert, dns_tls, tls) mvar ]
   end
 
-  let update_dns tcp lease name =
-    match (K.dns_key (), K.dns_server ()) with
-    | Some (key_name, key), Some ip ->
-        let open Dns in
-        let key_domain = Domain_name.drop_label_exn ~amount:2 key_name in
-        if Domain_name.is_subdomain ~subdomain:name ~domain:key_domain then
-          let update =
-            let actions =
-              let a =
-                (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
+  module Dhcp_dns (Resolver : module type of Dns_resolver_mirage_shared) =
+  struct
+    let update_dns tcp lease name =
+      match (K.dns_key (), K.dns_server ()) with
+      | Some (key_name, key), Some ip ->
+          let open Dns in
+          let key_domain = Domain_name.drop_label_exn ~amount:2 key_name in
+          if Domain_name.is_subdomain ~subdomain:name ~domain:key_domain then
+            let update =
+              let actions =
+                let a =
+                  (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
+                in
+                Packet.Update.[ Remove Rr_map.(K A); Add Rr_map.(B (A, a)) ]
               in
-              Packet.Update.[ Remove Rr_map.(K A); Add Rr_map.(B (A, a)) ]
+              let update = Domain_name.Map.singleton name actions in
+              (Domain_name.Map.empty, update)
             in
-            let update = Domain_name.Map.singleton name actions in
-            (Domain_name.Map.empty, update)
-          in
-          let zone = Packet.Question.create key_domain Rr_map.Soa
-          and header =
-            (Randomconv.int16 Mirage_crypto_rng.generate, Packet.Flags.empty)
-          in
-          let packet = Packet.create header zone (`Update update) in
-          match
-            Dns_tsig.encode_and_sign ~proto:`Tcp packet (Mirage_ptime.now ())
-              key key_name
-          with
-          | Error s ->
-              Logs.err (fun m ->
-                  m "Error %a while encoding and signing %a" Dns_tsig.pp_s s
-                    Domain_name.pp name);
-              Lwt.return []
-          | Ok (data, mac) -> (
-              S.TCP.create_connection tcp (ip, 53) >>= function
+            let zone = Packet.Question.create key_domain Rr_map.Soa
+            and header =
+              (Randomconv.int16 Mirage_crypto_rng.generate, Packet.Flags.empty)
+            in
+            let packet = Packet.create header zone (`Update update) in
+            match
+              Dns_tsig.encode_and_sign ~proto:`Tcp packet (Mirage_ptime.now ())
+                key key_name
+            with
+            | Error s ->
+                Logs.err (fun m ->
+                    m "Error %a while encoding and signing %a" Dns_tsig.pp_s s
+                      Domain_name.pp name);
+                Lwt.return []
+            | Ok (data, mac) -> (
+                S.TCP.create_connection tcp (ip, 53) >>= function
+                | Error e ->
+                    Logs.err (fun m ->
+                        m "cannot reach the DNS server %a: %a" Ipaddr.pp ip
+                          S.TCP.pp_error e);
+                    Lwt.return []
+                | Ok flow -> (
+                    let len = Cstruct.create 2 in
+                    Cstruct.BE.set_uint16 len 0 (String.length data);
+                    S.TCP.write flow
+                      (Cstruct.append len (Cstruct.of_string data))
+                    >>= function
+                    | Error e ->
+                        Logs.err (fun m ->
+                            m "Failed to write to DNS server %a: %a" Ipaddr.pp
+                              ip S.TCP.pp_write_error e);
+                        Lwt.return []
+                    | Ok () -> (
+                        S.TCP.read flow >>= function
+                        | Error e ->
+                            Logs.err (fun m ->
+                                m "Failed to read from DNS server %a: %a"
+                                  Ipaddr.pp ip S.TCP.pp_error e);
+                            Lwt.return []
+                        | Ok `Eof ->
+                            Logs.err (fun m ->
+                                m
+                                  "Expected an answer from DNS server %a, got \
+                                   eof"
+                                  Ipaddr.pp ip);
+                            Lwt.return []
+                        | Ok (`Data data) ->
+                            if Cstruct.length data >= 2 then
+                              let len = Cstruct.BE.get_uint16 data 0 in
+                              if Cstruct.length data >= 2 + len then
+                                let dns_packet =
+                                  Cstruct.to_string ~off:2 ~len data
+                                in
+                                match
+                                  Dns_tsig.decode_and_verify
+                                    (Mirage_ptime.now ()) key key_name ~mac
+                                    dns_packet
+                                with
+                                | Error e ->
+                                    Logs.err (fun m ->
+                                        m
+                                          "error %a while decoding nsupdate \
+                                           answer %a"
+                                          Dns_tsig.pp_e e Domain_name.pp name);
+                                    Lwt.return []
+                                | Ok (res, _, _) -> (
+                                    match
+                                      Packet.reply_matches_request
+                                        ~request:packet res
+                                    with
+                                    | Ok `Update_ack ->
+                                        Logs.info (fun m ->
+                                            m "successfully updated DNS");
+                                        let options =
+                                          [
+                                            Dhcp_wire.Client_fqdn
+                                              ([ `Overriden ], name);
+                                          ]
+                                        in
+                                        Lwt.return options
+                                    | Ok e ->
+                                        Logs.warn (fun m ->
+                                            m
+                                              "failed to update DNS, \
+                                               unexpected reply: %a"
+                                              Dns.Packet.pp_reply e);
+                                        Lwt.return []
+                                    | Error e ->
+                                        Logs.err (fun m ->
+                                            m "invalid reply %a for %a, got %a"
+                                              Packet.pp_mismatch e Packet.pp
+                                              packet Packet.pp res);
+                                        Lwt.return [])
+                              else (
+                                Logs.warn (fun m ->
+                                    m "received short DNS reply");
+                                Lwt.return [])
+                            else (
+                              Logs.warn (fun m ->
+                                  m "received a too short DNS reply");
+                              Lwt.return []))))
+          else (
+            Logs.warn (fun m ->
+                m "Requested a DNS update with %a, but key domain is %a"
+                  Domain_name.pp name Domain_name.pp key_domain);
+            Lwt.return [])
+      | None, _ ->
+          Logs.info (fun m -> m "no DNS key provided");
+          Lwt.return []
+      | _, None ->
+          Logs.info (fun m -> m "no DNS server IP provided");
+          Lwt.return []
+
+    let update_tlstunnel tcp lease name =
+      match Domain_name.host name with
+      | Error (`Msg msg) ->
+          Logs.err (fun m ->
+              m "cannot construct a host from %a" Domain_name.pp name);
+          Lwt.return []
+      | Ok name -> (
+          match (K.tlstunnel_key (), K.tlstunnel_server ()) with
+          | Some secret, Some ip -> (
+              let cmd =
+                Tlstunnel.Add (name, Ipaddr.V4 lease.Dhcp_server.Lease.addr, 80)
+              in
+              let data = Tlstunnel.cmd_to_str cmd in
+              S.TCP.create_connection tcp (ip, 1234) >>= function
               | Error e ->
                   Logs.err (fun m ->
-                      m "cannot reach the DNS server %a: %a" Ipaddr.pp ip
+                      m "cannot reach the TLSTUNNEL server %a: %a" Ipaddr.pp ip
                         S.TCP.pp_error e);
                   Lwt.return []
               | Ok flow -> (
-                  let len = Cstruct.create 2 in
-                  Cstruct.BE.set_uint16 len 0 (String.length data);
-                  S.TCP.write flow (Cstruct.append len (Cstruct.of_string data))
-                  >>= function
+                  S.TCP.write flow (Cstruct.of_string data) >>= function
                   | Error e ->
                       Logs.err (fun m ->
-                          m "Failed to write to DNS server %a: %a" Ipaddr.pp ip
-                            S.TCP.pp_write_error e);
+                          m "Failed to write to TLSTUNNEL server %a: %a"
+                            Ipaddr.pp ip S.TCP.pp_write_error e);
                       Lwt.return []
                   | Ok () -> (
-                      S.TCP.read flow >>= function
+                      S.TCP.read flow >|= function
                       | Error e ->
                           Logs.err (fun m ->
-                              m "Failed to read from DNS server %a: %a"
+                              m "Failed to read from TLSTUNNEL server %a: %a"
                                 Ipaddr.pp ip S.TCP.pp_error e);
-                          Lwt.return []
+                          []
                       | Ok `Eof ->
                           Logs.err (fun m ->
-                              m "Expected an answer from DNS server %a, got eof"
+                              m
+                                "Expected an answer from TLSTUNNEL server %a, \
+                                 got eof"
                                 Ipaddr.pp ip);
-                          Lwt.return []
+                          []
                       | Ok (`Data data) ->
-                          if Cstruct.length data >= 2 then
-                            let len = Cstruct.BE.get_uint16 data 0 in
-                            if Cstruct.length data >= 2 + len then
-                              let dns_packet =
-                                Cstruct.to_string ~off:2 ~len data
-                              in
-                              match
-                                Dns_tsig.decode_and_verify (Mirage_ptime.now ())
-                                  key key_name ~mac dns_packet
-                              with
-                              | Error e ->
-                                  Logs.err (fun m ->
-                                      m
-                                        "error %a while decoding nsupdate \
-                                         answer %a"
-                                        Dns_tsig.pp_e e Domain_name.pp name);
-                                  Lwt.return []
-                              | Ok (res, _, _) -> (
-                                  match
-                                    Packet.reply_matches_request ~request:packet
-                                      res
-                                  with
-                                  | Ok `Update_ack ->
-                                      Logs.info (fun m ->
-                                          m "successfully updated DNS");
-                                      let options =
-                                        [
-                                          Dhcp_wire.Client_fqdn
-                                            ([ `Overriden ], name);
-                                        ]
-                                      in
-                                      Lwt.return options
-                                  | Ok e ->
-                                      Logs.warn (fun m ->
-                                          m
-                                            "failed to update DNS, unexpected \
-                                             reply: %a"
-                                            Dns.Packet.pp_reply e);
-                                      Lwt.return []
-                                  | Error e ->
-                                      Logs.err (fun m ->
-                                          m "invalid reply %a for %a, got %a"
-                                            Packet.pp_mismatch e Packet.pp
-                                            packet Packet.pp res);
-                                      Lwt.return [])
-                            else (
-                              Logs.warn (fun m -> m "received short DNS reply");
-                              Lwt.return [])
-                          else (
-                            Logs.warn (fun m ->
-                                m "received a too short DNS reply");
-                            Lwt.return []))))
-        else (
-          Logs.warn (fun m ->
-              m "Requested a DNS update with %a, but key domain is %a"
-                Domain_name.pp name Domain_name.pp key_domain);
-          Lwt.return [])
-    | None, _ ->
-        Logs.info (fun m -> m "no DNS key provided");
-        Lwt.return []
-    | _, None ->
-        Logs.info (fun m -> m "no DNS server IP provided");
-        Lwt.return []
+                          (match
+                             Tlstunnel.cmd_of_str (Cstruct.to_string data)
+                           with
+                          | Ok (Result (0, _)) ->
+                              Logs.app (fun m ->
+                                  m "recorded %a in TLSTUNNEL" Domain_name.pp
+                                    name)
+                          | Ok (Result (n, msg)) ->
+                              Logs.err (fun m ->
+                                  m "failed to record %a in TLSTUNNEL: %u (%s)"
+                                    Domain_name.pp name n msg)
+                          | Ok r ->
+                              Logs.err (fun m ->
+                                  m "Expected a result from TLSTUNNEL, got %a"
+                                    Tlstunnel.pp_cmd r)
+                          | Error (`Msg msg) ->
+                              Logs.err (fun m ->
+                                  m "error while recording %a in TLSTUNNEL: %s"
+                                    Domain_name.pp name msg));
+                          [])))
+          | None, _ ->
+              Logs.info (fun m -> m "no TLSTUNNEL key provided");
+              Lwt.return []
+          | _, None ->
+              Logs.info (fun m -> m "no TLSTUNNEL server IP provided");
+              Lwt.return [])
 
-  let update_tlstunnel tcp lease name =
-    match Domain_name.host name with
-    | Error (`Msg msg) ->
-        Logs.err (fun m ->
-            m "cannot construct a host from %a" Domain_name.pp name);
-        Lwt.return []
-    | Ok name -> (
-        match (K.tlstunnel_key (), K.tlstunnel_server ()) with
-        | Some secret, Some ip -> (
-            let cmd =
-              Tlstunnel.Add (name, Ipaddr.V4 lease.Dhcp_server.Lease.addr, 80)
-            in
-            let data = Tlstunnel.cmd_to_str cmd in
-            S.TCP.create_connection tcp (ip, 1234) >>= function
-            | Error e ->
-                Logs.err (fun m ->
-                    m "cannot reach the TLSTUNNEL server %a: %a" Ipaddr.pp ip
-                      S.TCP.pp_error e);
-                Lwt.return []
-            | Ok flow -> (
-                S.TCP.write flow (Cstruct.of_string data) >>= function
-                | Error e ->
-                    Logs.err (fun m ->
-                        m "Failed to write to TLSTUNNEL server %a: %a" Ipaddr.pp
-                          ip S.TCP.pp_write_error e);
-                    Lwt.return []
-                | Ok () -> (
-                    S.TCP.read flow >|= function
-                    | Error e ->
-                        Logs.err (fun m ->
-                            m "Failed to read from TLSTUNNEL server %a: %a"
-                              Ipaddr.pp ip S.TCP.pp_error e);
-                        []
-                    | Ok `Eof ->
-                        Logs.err (fun m ->
-                            m
-                              "Expected an answer from TLSTUNNEL server %a, \
-                               got eof"
-                              Ipaddr.pp ip);
-                        []
-                    | Ok (`Data data) ->
-                        (match
-                           Tlstunnel.cmd_of_str (Cstruct.to_string data)
-                         with
-                        | Ok (Result (0, _)) ->
-                            Logs.app (fun m ->
-                                m "recorded %a in TLSTUNNEL" Domain_name.pp name)
-                        | Ok (Result (n, msg)) ->
-                            Logs.err (fun m ->
-                                m "failed to record %a in TLSTUNNEL: %u (%s)"
-                                  Domain_name.pp name n msg)
-                        | Ok r ->
-                            Logs.err (fun m ->
-                                m "Expected a result from TLSTUNNEL, got %a"
-                                  Tlstunnel.pp_cmd r)
-                        | Error (`Msg msg) ->
-                            Logs.err (fun m ->
-                                m "error while recording %a in TLSTUNNEL: %s"
-                                  Domain_name.pp name msg));
-                        [])))
-        | None, _ ->
-            Logs.info (fun m -> m "no TLSTUNNEL key provided");
-            Lwt.return []
-        | _, None ->
-            Logs.info (fun m -> m "no TLSTUNNEL server IP provided");
-            Lwt.return [])
-
-  let dhcp_lease_cb tcp resolver lease options =
-    (match
-       ( List.find_opt
-           (function Dhcp_wire.Hostname _ -> true | _ -> false)
-           options,
-         K.domain () )
-     with
-    | Some (Hostname name), Some (domain, _) -> (
-        match Domain_name.prepend_label domain name with
-        | Ok fqdn ->
-            Logs.info (fun m -> m "recording %a" Domain_name.pp fqdn);
-            let trie = Resolver.primary_data resolver in
-            let a_record =
-              (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
-            in
-            let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
-            Resolver.update_primary_data resolver trie
-        | Error (`Msg msg) ->
-            Logs.warn (fun m ->
-                m "couldn't construct a domain name from %S and %a: %s" name
-                  Domain_name.pp domain msg))
-    | None, _ -> Logs.info (fun m -> m "no Hostname found in the DHCP request")
-    | _, None ->
-        Logs.info (fun m ->
-            m "no domain provided (via --domain), not registering any names")
-    | _ ->
-        Logs.info (fun m ->
-            m "no Hostname or nor domain found in the DHCP request"));
-    (match
-       List.find_opt
-         (function Dhcp_wire.Client_fqdn _ -> true | _ -> false)
-         options
-     with
-    | Some (Dhcp_wire.Client_fqdn (flags, name)) ->
-        if List.mem `Server_A flags && not (List.mem `No_update flags) then
-          update_dns tcp lease name >>= fun r ->
-          update_tlstunnel tcp lease name >>= fun r2 -> Lwt.return (r @ r2)
-        else Lwt.return []
-    | None ->
-        Logs.info (fun m -> m "no client FQDN requested");
-        Lwt.return []
-    | Some _ -> assert false)
-    >>= fun options -> Lwt.return (Ok options)
+    let dhcp_lease_cb tcp resolver lease options =
+      (match
+         ( List.find_opt
+             (function Dhcp_wire.Hostname _ -> true | _ -> false)
+             options,
+           K.domain () )
+       with
+      | Some (Hostname name), Some (domain, _) -> (
+          match Domain_name.prepend_label domain name with
+          | Ok fqdn ->
+              Logs.info (fun m -> m "recording %a" Domain_name.pp fqdn);
+              let trie = Resolver.primary_data resolver in
+              let a_record =
+                (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
+              in
+              let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
+              Resolver.update_primary_data resolver trie
+          | Error (`Msg msg) ->
+              Logs.warn (fun m ->
+                  m "couldn't construct a domain name from %S and %a: %s" name
+                    Domain_name.pp domain msg))
+      | None, _ ->
+          Logs.info (fun m -> m "no Hostname found in the DHCP request")
+      | _, None ->
+          Logs.info (fun m ->
+              m "no domain provided (via --domain), not registering any names")
+      | _ ->
+          Logs.info (fun m ->
+              m "no Hostname or nor domain found in the DHCP request"));
+      (match
+         List.find_opt
+           (function Dhcp_wire.Client_fqdn _ -> true | _ -> false)
+           options
+       with
+      | Some (Dhcp_wire.Client_fqdn (flags, name)) ->
+          if List.mem `Server_A flags && not (List.mem `No_update flags) then
+            update_dns tcp lease name >>= fun r ->
+            update_tlstunnel tcp lease name >>= fun r2 -> Lwt.return (r @ r2)
+          else Lwt.return []
+      | None ->
+          Logs.info (fun m -> m "no client FQDN requested");
+          Lwt.return []
+      | Some _ -> assert false)
+      >>= fun options -> Lwt.return (Ok options)
+  end
 
   let start net assets =
     let mac = N.mac net in
@@ -1508,59 +1516,72 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       Dns_server.Primary.create ~trie_cache_entries:0
         ~rng:Mirage_crypto_rng.generate trie
     in
-    (match K.dns_upstream () with
-    | None -> (
-        Logs.info (fun m -> m "using a recursive resolver");
-        let resolver =
-          let features =
-            (if K.dnssec () then [ `Dnssec ] else [])
-            @ (if K.qname_minimisation () then [ `Qname_minimisation ] else [])
-            @
-            if K.opportunistic_tls () then [ `Opportunistic_tls_authoritative ]
-            else []
-          in
-          Dns_resolver.create ?cache_size:(K.dns_cache ()) features
-            (Mirage_mtime.elapsed_ns ())
-            Mirage_crypto_rng.generate primary_t
-        in
-        let resolver = Resolver.resolver stack ~root:true resolver in
-        net.lease_acquired <- dhcp_lease_cb tcp resolver;
-        let t = { net; mac; configuration; resolver } in
-        let password = K.password () in
-        (match password with
+    let password = K.password () in
+    (match password with
+    | None ->
+        Logs.warn (fun m ->
+            m
+              "No password specified, endpoints requiring authentication won't \
+               be accessible.")
+    | Some _ -> ());
+    (if K.no_tls () then
+       Logs.warn (fun m ->
+           m
+             "TLS is disabled, no HTTPS management interface, and no \
+              DNS-over-TLS and DNS-over-HTTPS will be available.")
+     else
+       match K.ca_key () with
+       | None ->
+           Logs.err (fun m ->
+               m "Neither --no-tls nor --ca-seed specified. %s" K.ca_key_doc);
+           exit Mirage_runtime.argument_error
+       | Some _ -> ());
+    ASSETS.get assets (Mirage_kv.Key.v "main.js") >>= function
+    | Error _e -> invalid_arg "JS file could not be loaded"
+    | Ok js_file ->
+        (match K.dns_upstream () with
         | None ->
-            Logs.warn (fun m ->
-                m
-                  "No password specified, endpoints requiring authentication \
-                   won't be accessible.")
-        | Some _ -> ());
-        (if K.no_tls () then
-           Logs.warn (fun m ->
-               m
-                 "TLS is disabled, no HTTPS management interface, and no \
-                  DNS-over-TLS and DNS-over-HTTPS will be available.")
-         else
-           match K.ca_key () with
-           | None ->
-               Logs.err (fun m ->
-                   m "Neither --no-tls nor --ca-seed specified. %s" K.ca_key_doc);
-               exit Mirage_runtime.argument_error
-           | Some _ -> ());
-        ASSETS.get assets (Mirage_kv.Key.v "main.js") >>= function
-        | Error _e -> invalid_arg "JS file could not be loaded"
-        | Ok js_file ->
+            Logs.info (fun m -> m "using a recursive resolver");
+            let module Daemon = Daemon (Resolver) in
+            let module Dhcp_dns = Dhcp_dns (Resolver) in
+            let resolver =
+              let features =
+                (if K.dnssec () then [ `Dnssec ] else [])
+                @ (if K.qname_minimisation () then [ `Qname_minimisation ]
+                   else [])
+                @
+                if K.opportunistic_tls () then
+                  [ `Opportunistic_tls_authoritative ]
+                else []
+              in
+              Dns_resolver.create ?cache_size:(K.dns_cache ()) features
+                (Mirage_mtime.elapsed_ns ())
+                Mirage_crypto_rng.generate primary_t
+            in
+            let resolver = Resolver.resolver stack ~root:true resolver in
+            net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver;
+            let t = { net; mac; configuration } in
             Lwt.async (fun () ->
-                Daemon.start_resolver t stack tcp http_client js_file password);
-            Lwt.return_unit)
-    | Some ns -> (
-        Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
-        Stub.H.connect_device stack >>= fun happy_eyeballs ->
-        try
-          Stub.create ?cache_size:(K.dns_cache ()) ~nameservers:[ ns ] primary_t
-            ~happy_eyeballs stack
-          >|= fun _ -> ()
-        with Invalid_argument a ->
-          Logs.err (fun m -> m "error %s" a);
-          exit Mirage_runtime.argument_error))
-    >>= fun () -> S.listen stack
+                Daemon.start_resolver t resolver stack tcp http_client js_file
+                  password);
+            Lwt.return_unit
+        | Some ns -> (
+            Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
+            let module Daemon = Daemon (Stub) in
+            let module Dhcp_dns = Dhcp_dns (Stub) in
+            Stub.H.connect_device stack >>= fun happy_eyeballs ->
+            try
+              Stub.create ?cache_size:(K.dns_cache ()) ~nameservers:[ ns ]
+                primary_t ~happy_eyeballs stack
+              >>= fun resolver ->
+              net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver;
+              let t = { net; mac; configuration } in
+              Lwt.async (fun () ->
+                  Daemon.start_resolver t resolver stack tcp http_client js_file
+                    password);
+              Lwt.return_unit
+            with Invalid_argument a ->
+              Logs.err (fun m -> m "error %s" a);
+              exit Mirage_runtime.argument_error))
+        >>= fun () -> S.listen stack
 end
