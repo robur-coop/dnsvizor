@@ -495,7 +495,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module Http_client = Http_mirage_client.Make (TCP) (Mimic_he)
   module Map = Map.Make (String)
 
-  type t = { net : Net.t; mac : Macaddr.t; mutable configuration : string }
+  type t = { net : Net.t; mac : Macaddr.t; mutable configuration : Dnsvizor.Config_parser.config }
 
   let process_config configuration =
     let ( let* ) = Result.bind in
@@ -507,12 +507,19 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let rec gather acc : Dnsvizor.Config_parser.config -> _ = function
       | [] -> Ok acc
       | `Ignored :: r -> gather acc r
+      | `Dhcp_range ({ mode = Some _; _ } |
+                     { broadcast = Some _; _ } |
+                     { lease_time = Some _; _ } |
+                     { netmask = Some _; _ }) ->
+        Error "Unhandled dhcp-range option"
       | `Dhcp_range dhcp_range :: r ->
         let (dhcp_range', log_servers, domain, no_hosts, dnssec) = acc in
         (* TODO: multiple ranges *)
+        (* TODO: netmask *)
         let* () = unique dhcp_range' "dhcp-range" in
+        let range = (dhcp_range.start_addr, dhcp_range.end_addr, dhcp_range.lease_time) in
         gather
-          (Some (dhcp_range.start_addr, dhcp_range.end_addr), log_servers, domain, no_hosts, dnssec)
+          (Some range, log_servers, domain, no_hosts, dnssec)
           r
       | `Dhcp_option { tags = _ :: _; _ } :: _ ->
         Error "Don't know how to handle tags in --dhcp-option (yet)"
@@ -527,7 +534,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                  Dnsvizor.Config_parser.pp_dhcp_option dhcp_option)
       | `Dhcp_host _ :: _ ->
         Error "Don't know how to handle dhcp-host (yet)"
-      | (`Domain domain) :: r ->
+      | `Domain (_, Some _) :: _ ->
+        Error "Don't know how to handle domain with address range or interface"
+      | (`Domain (domain, None)) :: r ->
         let (dhcp_range, log_servers, domain', no_hosts, dnssec) = acc in
         let* () = unique domain' "domain" in
         gather (dhcp_range, log_servers, Some domain, no_hosts, dnssec) r
@@ -539,6 +548,45 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         gather (dhcp_range, dhcp_option, domain, no_hosts, true) r
     in
     gather (None, None, None, false, false) configuration
+
+  let dhcp_configuration_of mac config =
+    let ( let* ) = Result.bind in
+    let ipv4 = K.ipv4 () in
+    let ipv4_address = Ipaddr.V4.Prefix.address ipv4 in
+    let* (range, log_servers, domain, no_hosts, dnssec) = process_config config in
+    let* range, default_lease_time =
+      match range with
+      | None -> Ok (None, None)
+      | Some (start, None, lease_time) ->
+        if Ipaddr.V4.Prefix.mem start ipv4 then
+          Ok (Some (start, Ipaddr.V4.Prefix.last ipv4), lease_time)
+        else
+          Error ("Don't know what to do with dhcp-range " ^ Ipaddr.V4.to_string start)
+      | Some (start, Some stop, lease_time) ->
+        if Ipaddr.V4.Prefix.mem start ipv4 &&
+           Ipaddr.V4.Prefix.mem stop ipv4 then
+          Ok (Some (start, stop), lease_time)
+        else
+          Error (Fmt.str "Don't know what to do with dhcp-range %a,%a"
+                   Ipaddr.V4.pp start Ipaddr.V4.pp stop)
+    in
+    let options =
+      (match K.ipv4_gateway () with
+       | None -> []
+       | Some x -> [ Dhcp_wire.Routers [ x ] ])
+      @ [ Dhcp_wire.Dns_servers [ ipv4_address ] ]
+      @ Option.to_list log_servers
+      @ Option.to_list
+        (Option.map
+           (fun domain ->
+              Dhcp_wire.Domain_name (Domain_name.to_string domain))
+           domain)
+    in
+    Ok
+      (Dhcp_server.Config.make ?hostname:None ?default_lease_time
+         ?max_lease_time:None ?hosts:None ~addr_tuple:(ipv4_address, mac)
+         ~network:(Ipaddr.V4.Prefix.prefix ipv4)
+         ~range ~options ())
 
   let dhcp_configuration_of mac dhcp_range domain =
     let v4_address = Ipaddr.V4.Prefix.address (K.ipv4 ()) in
@@ -579,7 +627,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   let of_commandline mac () =
     let configuration = K.dnsmasq () in
     let dhcp_configuration = dhcp_configuration_of mac configuration in
-    let configuration = Fmt.str "%a\n" Config_parser.pp_config configuration in
     in
     (configuration, dhcp_configuration)
 
