@@ -47,8 +47,6 @@ module K = struct
   open Cmdliner
   open Dnsvizor
 
-  let s_dnsmasq = "DNSMASQ-COMPATIBLE OPTIONS"
-
   let ipv4 =
     Mirage_runtime.register_arg
       (Mirage_runtime_network.V4.network
@@ -100,83 +98,137 @@ module K = struct
     Mirage_runtime.register_arg Arg.(value & opt_all domain [] doc)
 
   (* DNSmasq configuration options *)
-  (* TODO support multiple dhcp-range statements *)
-  let dhcp_range =
-    let doc =
-      Arg.info ~doc:"Enable DHCP server." ~docv:Config_parser.dhcp_range_docv
-        ~docs:s_dnsmasq [ "dhcp-range" ]
-    in
-    Mirage_runtime.register_arg
+  module Dnsmasq = struct
+    let s_dnsmasq = "DNSMASQ-COMPATIBLE OPTIONS"
+
+    (* TODO support multiple dhcp-range statements *)
+    let dhcp_range =
+      let doc =
+        Arg.info ~doc:"Enable DHCP server." ~docv:Config_parser.dhcp_range_docv
+          ~docs:s_dnsmasq [ "dhcp-range"; "F" ]
+      in
       Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
 
-  let domain =
-    let doc =
-      Arg.info ~doc:"Domain to use." ~docv:Config_parser.domain_docv
-        ~docs:s_dnsmasq [ "domain" ]
-    in
-    Mirage_runtime.register_arg
+    let dhcp_host =
+      let doc =
+        Arg.info ~doc:"TODO dhcp-host description." ~docv:Config_parser.dhcp_host_docv
+          ~docs:s_dnsmasq [ "dhcp-host"; "G" ]
+      in
+      (*
+      let dhcp_host_c =
+        let parser s =
+          let p = Arg.conv_parser Config_parser.dhcp_host_c in
+          match p s with
+          | Error _ as err -> err
+          | Ok _ -> Error (`Msg "Don't know how to handle --dhcp-host (yet)")
+        in
+        Arg.conv (parser, Arg.conv_printer Config_parser.dhcp_host_c)
+      in
+         *)
+      Arg.(value & opt (some Config_parser.dhcp_host_c) None doc)
+
+    let dhcp_option =
+      let doc =
+        Arg.info ~doc:"TODO dhcp-option description." ~docv:Config_parser.dhcp_option_docv
+          ~docs:s_dnsmasq [ "dhcp-option"; "O" ]
+      in
+      (*
+      let dhcp_option_c =
+        let parser s =
+          match Arg.conv_parser Config_parser.dhcp_option_c s with
+          | Error _ as err -> err
+          | Ok { tags = _ :: _; _ } ->
+            Error (`Msg "Don't know how to handle tags in --dhcp-option (yet)")
+          | Ok { option = Dhcp_wire.Log_servers _; _ } as ok -> ok
+          | Ok ({ option = _; _ } as option) ->
+            Error (`Msg (Fmt.str "Don't know how to handle dhcp-option %a"
+                           Config_parser.pp_dhcp_option option))
+        in
+        Arg.conv (parser, Arg.conv_printer Config_parser.dhcp_option_c)
+      in
+         *)
+      Arg.(value & opt (some Config_parser.dhcp_option_c) None doc)
+
+    let domain =
+      let doc =
+        Arg.info ~doc:"Domain to use." ~docv:Config_parser.domain_docv
+          ~docs:s_dnsmasq [ "domain" ]
+      in
       Arg.(value & opt Config_parser.(some domain_c) None doc)
 
-  (* various ignored DNSmasq configuration options *)
-  let interface =
-    let doc =
-      Arg.info ~docs:Manpage.s_none ~doc:"Interface to listen on."
-        [ "interface" ]
-    in
-    Mirage_runtime.register_arg
+    (* various ignored DNSmasq configuration options *)
+    let interface =
+      let doc =
+        Arg.info ~docs:Manpage.s_none ~doc:"Interface to listen on."
+          [ "interface" ]
+      in
       Arg.(value & opt Config_parser.(some (ignore_c "interface")) None doc)
 
-  let except_interface =
-    let doc =
-      Arg.info ~docs:Manpage.s_none ~doc:"Interface to not listen on."
-        [ "except-interface" ]
-    in
-    Mirage_runtime.register_arg
+    let except_interface =
+      let doc =
+        Arg.info ~docs:Manpage.s_none ~doc:"Interface to not listen on."
+          [ "except-interface" ]
+      in
       Arg.(
         value & opt Config_parser.(some (ignore_c "except-interface")) None doc)
 
-  let listen_address =
-    let doc =
-      Arg.info ~docs:Manpage.s_none ~doc:"IP address to listen on."
-        [ "listen-address" ]
-    in
-    Mirage_runtime.register_arg
+    let listen_address =
+      let doc =
+        Arg.info ~docs:Manpage.s_none ~doc:"IP address to listen on."
+          [ "listen-address" ]
+      in
       Arg.(
         value & opt Config_parser.(some (ignore_c "listen-address")) None doc)
 
-  let no_dhcp_interface =
-    let doc =
-      Arg.info ~docs:Manpage.s_none ~doc:"Only provide DNS service on."
-        [ "no-dhcp-interface" ]
-    in
-    Mirage_runtime.register_arg
+    let no_dhcp_interface =
+      let doc =
+        Arg.info ~docs:Manpage.s_none ~doc:"Only provide DNS service on."
+          [ "no-dhcp-interface" ]
+      in
       Arg.(
         value & opt Config_parser.(some (ignore_c "no-dhcp-interface")) None doc)
 
-  let bind_interfaces =
-    let doc =
-      Arg.info ~docs:Manpage.s_none ~doc:"Bind to interface IP address only."
-        [ "bind_interfaces" ]
-    in
-    Mirage_runtime.register_arg Arg.(value & flag doc)
+    let bind_interfaces =
+      let doc =
+        Arg.info ~docs:Manpage.s_none ~doc:"Bind to interface IP address only."
+          [ "bind_interfaces" ]
+      in
+      Arg.(value & flag doc)
 
-  (* Further configuration options, not ignored *)
-  let no_hosts =
-    let doc =
-      Arg.info
-        ~doc:
-          "Don't 'read' the (synthesized) /etc/hosts (contains only --name \
-           argument)"
-        [ "no-hosts" ]
-    in
-    Mirage_runtime.register_arg Arg.(value & flag doc)
+    (* Further configuration options, not ignored *)
+    let no_hosts =
+      let doc =
+        Arg.info
+          ~doc:
+            "Don't 'read' the (synthesized) /etc/hosts (contains only --name \
+             argument)"
+          [ "no-hosts" ]
+      in
+      Arg.(value & flag doc)
 
-  let dnssec =
-    let doc =
-      Arg.info ~doc:"Validate DNS replies and cache DNSSEC data."
-        ~docs:s_dnsmasq [ "dnssec" ]
-    in
-    Mirage_runtime.register_arg Arg.(value & flag doc)
+    let dnssec =
+      let doc =
+        Arg.info ~doc:"Validate DNS replies and cache DNSSEC data."
+          ~docs:s_dnsmasq [ "dnssec" ]
+      in
+      Arg.(value & flag doc)
+  end
+
+  let dnsmasq : unit -> Config_parser.config =
+    Mirage_runtime.register_arg @@
+    let open Cmdliner.Term.Syntax in
+    let open Dnsmasq in
+    let ( @? ) x xs = match x with None -> xs | Some x -> x :: xs in
+    let+ dhcp_range and+ dhcp_host and+ dhcp_option and+ domain and+ _ = interface
+    and+ _ = except_interface and+ _ = listen_address and+ _ = no_dhcp_interface
+    and+ _ = bind_interfaces and+ no_hosts and+ dnssec in
+    Option.map (fun x -> `Dhcp_range x) dhcp_range @?
+    Option.map (fun x -> `Dhcp_host x) dhcp_host @?
+    Option.map (fun x -> `Dhcp_option x) dhcp_option @?
+    Option.map (fun x -> `Domain x) domain @?
+    (if no_hosts then Some `No_hosts else None) @?
+    (if dnssec then Some `Dnssec else None) @?
+    []
 
   let qname_minimisation =
     let doc =
@@ -445,6 +497,49 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
   type t = { net : Net.t; mac : Macaddr.t; mutable configuration : string }
 
+  let process_config configuration =
+    let ( let* ) = Result.bind in
+    let unique x item =
+      match x with
+      | None -> Ok ()
+      | Some _ -> Error (item ^ " must only appear once")
+    in
+    let rec gather acc : Dnsvizor.Config_parser.config -> _ = function
+      | [] -> Ok acc
+      | `Ignored :: r -> gather acc r
+      | `Dhcp_range dhcp_range :: r ->
+        let (dhcp_range', log_servers, domain, no_hosts, dnssec) = acc in
+        (* TODO: multiple ranges *)
+        let* () = unique dhcp_range' "dhcp-range" in
+        gather
+          (Some (dhcp_range.start_addr, dhcp_range.end_addr), log_servers, domain, no_hosts, dnssec)
+          r
+      | `Dhcp_option { tags = _ :: _; _ } :: _ ->
+        Error "Don't know how to handle tags in --dhcp-option (yet)"
+      | `Dhcp_option ({ option = Dhcp_wire.Log_servers _; _ } as dhcp_option) :: r ->
+        let (dhcp_range, dhcp_option', domain, no_hosts, dnssec) = acc in
+        let* () = unique dhcp_option' "dhcp-option log-server" in
+        gather
+          (dhcp_range, Some dhcp_option.option, domain, no_hosts, dnssec)
+          r
+      | `Dhcp_option ({ tags = []; option = _ } as dhcp_option) :: _ ->
+        Error (Fmt.str "Don't know how to handle dhcp-option %a"
+                 Dnsvizor.Config_parser.pp_dhcp_option dhcp_option)
+      | `Dhcp_host _ :: _ ->
+        Error "Don't know how to handle dhcp-host (yet)"
+      | (`Domain domain) :: r ->
+        let (dhcp_range, log_servers, domain', no_hosts, dnssec) = acc in
+        let* () = unique domain' "domain" in
+        gather (dhcp_range, log_servers, Some domain, no_hosts, dnssec) r
+      | `No_hosts :: r ->
+        let (dhcp_range, dhcp_option, domain, _, dnssec) = acc in
+        gather (dhcp_range, dhcp_option, domain, true, dnssec) r
+      | `Dnssec :: r ->
+        let (dhcp_range, dhcp_option, domain, no_hosts, _) = acc in
+        gather (dhcp_range, dhcp_option, domain, no_hosts, true) r
+    in
+    gather (None, None, None, false, false) configuration
+
   let dhcp_configuration_of mac dhcp_range domain =
     let v4_address = Ipaddr.V4.Prefix.address (K.ipv4 ()) in
     let options =
@@ -482,20 +577,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
          ~range ~options ())
 
   let of_commandline mac () =
-    let dhcp_configuration =
-      match K.dhcp_range () with
-      | None -> None
-      | Some dhcp_range -> dhcp_configuration_of mac dhcp_range (K.domain ())
-    in
-    let configuration =
-      String.concat "\n"
-        [
-          (match K.dhcp_range () with
-          | None -> ""
-          | Some x ->
-              Fmt.str "dhcp-range: %a" Dnsvizor.Config_parser.pp_dhcp_range x);
-          (if K.dnssec () then "dnssec" else "");
-        ]
+    let configuration = K.dnsmasq () in
+    let dhcp_configuration = dhcp_configuration_of mac configuration in
+    let configuration = Fmt.str "%a\n" Config_parser.pp_config configuration in
     in
     (configuration, dhcp_configuration)
 
