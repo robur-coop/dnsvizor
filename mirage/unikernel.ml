@@ -107,7 +107,7 @@ module K = struct
         ~docs:s_dnsmasq [ "dhcp-range" ]
     in
     Mirage_runtime.register_arg
-      Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
+      Arg.(value & opt (some Config_parser.dhcp_range_c) None doc)
 
   let domain =
     let doc =
@@ -115,7 +115,7 @@ module K = struct
         ~docs:s_dnsmasq [ "domain" ]
     in
     Mirage_runtime.register_arg
-      Arg.(value & opt Config_parser.(some domain_c) None doc)
+      Arg.(value & opt (some Config_parser.domain_c) None doc)
 
   (* various ignored DNSmasq configuration options *)
   let interface =
@@ -124,7 +124,7 @@ module K = struct
         [ "interface" ]
     in
     Mirage_runtime.register_arg
-      Arg.(value & opt Config_parser.(some (ignore_c "interface")) None doc)
+      Arg.(value & opt (some (Config_parser.ignore_c "interface")) None doc)
 
   let except_interface =
     let doc =
@@ -133,7 +133,7 @@ module K = struct
     in
     Mirage_runtime.register_arg
       Arg.(
-        value & opt Config_parser.(some (ignore_c "except-interface")) None doc)
+        value & opt (some (Config_parser.ignore_c "except-interface")) None doc)
 
   let listen_address =
     let doc =
@@ -142,7 +142,7 @@ module K = struct
     in
     Mirage_runtime.register_arg
       Arg.(
-        value & opt Config_parser.(some (ignore_c "listen-address")) None doc)
+        value & opt (some (Config_parser.ignore_c "listen-address")) None doc)
 
   let no_dhcp_interface =
     let doc =
@@ -151,7 +151,7 @@ module K = struct
     in
     Mirage_runtime.register_arg
       Arg.(
-        value & opt Config_parser.(some (ignore_c "no-dhcp-interface")) None doc)
+        value & opt (some (Config_parser.ignore_c "no-dhcp-interface")) None doc)
 
   let bind_interfaces =
     let doc =
