@@ -232,14 +232,16 @@ let dhcp_range end_of_directive =
   let netmask, broadcast = net_broad in
   { start_addr; end_addr; mode; netmask; broadcast; lease_time }
 
+let until_comma =
+  scan_string () (fun () c ->
+      (* FIXME: probably be more precise in accepted characters *)
+      match c with
+      | ',' -> None
+      | _ -> Some ())
+
+let tag_thing = string "tag:" *> commit *> until_comma
+
 let dhcp_host end_of_directive =
-  let until_comma =
-    scan_string () (fun () c ->
-        (* FIXME: probably be more precise in accepted characters *)
-        match c with
-        | ',' -> None
-        | _ -> Some ())
-  in
   let lease_time = lease_time >>| fun lease -> `Lease_time lease in
   let id_thing =
     string_ci "id:" *> commit
@@ -274,9 +276,6 @@ let dhcp_host end_of_directive =
       ]
     *> commit *> until_comma
     >>| fun set -> `Set set
-  in
-  let tag_thing =
-    string "tag:" *> commit *> until_comma >>| fun tag -> `Tag tag
   in
   let mac_addr =
     (* NOTE: ocaml-tcpip only supports mac addresses of 6 bytes so let's not
@@ -318,7 +317,7 @@ let dhcp_host end_of_directive =
       [
         id_thing;
         net_set_thing;
-        tag_thing;
+        (tag_thing >>| fun tag -> `Tag tag);
         mac_addr;
         ipv4_addr;
         (* TODO: ipv6_addr ; *)
@@ -409,6 +408,48 @@ let address_range =
   <|> ( string "/" *> int >>= fun prefix ->
         return (`Ip (Ipaddr.V4.Prefix.make prefix start)) )
 
+type dhcp_option = { tags : string list; option : Dhcp_wire.dhcp_option }
+
+let dhcp_opt_code =
+  let integer_opt =
+    int >>= fun v ->
+    if v < 0 || v >= 256 then fail "Invalid option number"
+    else
+      match Dhcp_wire.int_to_option_code v with
+      | None -> fail "Invalid option number"
+      | Some option_code -> return option_code
+  in
+  let log_server = string "log-server" *> return Dhcp_wire.LOG_SERVERS in
+  choice ~failure_msg:"option:" [ integer_opt; log_server ]
+
+let dhcp_opt =
+  dhcp_opt_code <* commit >>= function
+  | Dhcp_wire.LOG_SERVERS ->
+      Log.err (fun m -> m "LOG_SERVERS");
+      many1 (char ',' *> ipv4_dotted) <?> "log-servers ips"
+      >>= fun log_servers -> return (Dhcp_wire.Log_servers log_servers)
+  | code ->
+      Format.kasprintf fail "Unsupported dhcp option %s"
+        (Dhcp_wire.option_code_to_string code)
+
+let dhcp_option end_of_directive =
+  (* [tag:<tag>,[tag:<tag>,]][encap:<opt>,][vi-encap:<enterprise>,][vendor:[<vendor-class>],][<opt>|option:<opt-name>|option6:<opt>|option6:<opt-name>],[<value>[,<value>]] *)
+  many (tag_thing <* char ',') >>= fun tags ->
+  string "option:" *> commit *> dhcp_opt <* end_of_directive >>| fun option ->
+  { option; tags }
+
+let pp_dhcp_opt ppf = function
+  | Dhcp_wire.Log_servers log_servers ->
+      Fmt.pf ppf "log-servers,%a"
+        Fmt.(list ~sep:(any ",") Ipaddr.V4.pp)
+        log_servers
+  | _ -> assert false
+
+let pp_dhcp_option ppf { tags; option } =
+  Fmt.pf ppf "%aoption:%a"
+    Fmt.(list ~sep:nop (string ++ any ","))
+    tags pp_dhcp_opt option
+
 let pp_address_range ppf = function
   | `Ip_range (a, b) -> Fmt.pf ppf "%a,%a" Ipaddr.V4.pp a Ipaddr.V4.pp b
   | `Ip pre -> Ipaddr.V4.Prefix.pp ppf pre
@@ -460,6 +501,14 @@ let dhcp_host_c =
     (dhcp_host arg_end_of_directive)
     pp_dhcp_host
 
+let dhcp_option_docv =
+  "[tag:<tag>,[tag:<tag>,]][opt|option:<opt-name>],[<value>[,value]]"
+
+let dhcp_option_c =
+  conv_cmdliner ~docv:dhcp_option_docv
+    (dhcp_option arg_end_of_directive)
+    pp_dhcp_option
+
 let domain_docv =
   (* note that address range is either "<start address>,<end address>" or "<ip address>/<prefix length>" *)
   (* TODO dnsmasq has [,local] after the "<address range>" *)
@@ -469,7 +518,12 @@ let domain_c =
   conv_cmdliner ~docv:domain_docv (domain arg_end_of_directive) pp_domain
 
 type config =
-  [ `Dhcp_range of dhcp_range | `Domain of domain | `Dnssec | `Ignored ] list
+  [ `Dhcp_range of dhcp_range
+  | `Domain of domain
+  | `Dhcp_option of dhcp_option
+  | `Dnssec
+  | `Ignored ]
+  list
 
 let parse_file data =
   let rules =
@@ -493,6 +547,8 @@ let parse_file data =
            (flag "dnssec" >>| fun _ -> `Dnssec);
            ( directive_prefix "domain" *> domain conf_end_of_directive
            >>| fun domain -> `Domain domain );
+           ( directive_prefix "dhcp-option" *> dhcp_option conf_end_of_directive
+           >>| fun dhcp_option -> `Dhcp_option dhcp_option );
            ignore_directive "interface";
            ignore_directive "except-interface";
            ignore_directive "listen-address";

@@ -30,6 +30,13 @@ val pp_dhcp_host : dhcp_host Fmt.t
 val dhcp_host_docv : string
 val dhcp_host_c : dhcp_host Cmdliner.Arg.conv
 
+type dhcp_option = { tags : string list; option : Dhcp_wire.dhcp_option }
+
+val dhcp_option : unit Angstrom.t -> dhcp_option Angstrom.t
+val pp_dhcp_option : dhcp_option Fmt.t
+val dhcp_option_docv : string
+val dhcp_option_c : dhcp_option Cmdliner.Arg.conv
+
 type domain =
   [ `raw ] Domain_name.t
   * [ `Interface of string
@@ -44,7 +51,12 @@ val domain_c : domain Cmdliner.Arg.conv
 val ignore_c : string -> string Cmdliner.Arg.conv
 
 type config =
-  [ `Dhcp_range of dhcp_range | `Domain of domain | `Dnssec | `Ignored ] list
+  [ `Dhcp_range of dhcp_range
+  | `Domain of domain
+  | `Dhcp_option of dhcp_option
+  | `Dnssec
+  | `Ignored ]
+  list
 
 val parse_file : string -> (config, [> `Msg of string ]) result
 val arg_end_of_directive : unit Angstrom.t

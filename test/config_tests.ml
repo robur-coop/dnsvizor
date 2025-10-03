@@ -336,12 +336,26 @@ let test_configuration config file () =
         "Number of configuration items matches" (List.length config)
         (List.length data)
 
+let dhcp_option_conf =
+  [
+    `Dhcp_option
+      { tags = []; option = Dhcp_wire.Log_servers [ Ipaddr.V4.localhost ] };
+    `Dhcp_option
+      {
+        tags = [ "naughties" ];
+        option = Dhcp_wire.Log_servers [ Ipaddr.V4.of_string_exn "8.8.8.8" ];
+      };
+  ]
+
 let config_file_tests =
   [
     ("First example", `Quick, test_configuration [] "simple.conf");
     ( "White space and comments",
       `Quick,
       test_configuration [] "whitespace-and-comments.conf" );
+    ( "dhcp-option",
+      `Quick,
+      test_configuration dhcp_option_conf "dhcp-option.conf" );
   ]
 
 let tests =
