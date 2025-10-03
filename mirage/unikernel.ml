@@ -105,14 +105,14 @@ module K = struct
     let dhcp_range =
       let doc =
         Arg.info ~doc:"Enable DHCP server." ~docv:Config_parser.dhcp_range_docv
-          ~docs:s_dnsmasq [ "dhcp-range"; "F" ]
+          ~docs:s_dnsmasq [ "dhcp-range" ]
       in
       Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
 
     let dhcp_host =
       let doc =
         Arg.info ~doc:"TODO dhcp-host description." ~docv:Config_parser.dhcp_host_docv
-          ~docs:s_dnsmasq [ "dhcp-host"; "G" ]
+          ~docs:s_dnsmasq [ "dhcp-host" ]
       in
       (*
       let dhcp_host_c =
@@ -130,7 +130,7 @@ module K = struct
     let dhcp_option =
       let doc =
         Arg.info ~doc:"TODO dhcp-option description." ~docv:Config_parser.dhcp_option_docv
-          ~docs:s_dnsmasq [ "dhcp-option"; "O" ]
+          ~docs:s_dnsmasq [ "dhcp-option" ]
       in
       (*
       let dhcp_option_c =
