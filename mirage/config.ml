@@ -6,10 +6,9 @@ open Mirage
 let assets = crunch "assets"
 
 let dnsvizor =
-  let pin = "git+file://" ^ Filename.dirname (Sys.getcwd ()) ^ "#HEAD" in
+  let local_libs = [ "dnsvizor" ] in
   let packages =
     [
-      package ~pin "dnsvizor";
       package "logs";
       package ~min:"0.5.0" "metrics";
       package "dns";
@@ -37,7 +36,7 @@ let dnsvizor =
       package "multipart_form";
     ]
   in
-  main ~packages "Unikernel.Main" (network @-> kv_ro @-> job)
+  main ~local_libs ~packages "Unikernel.Main" (network @-> kv_ro @-> job)
 
 (* this works around the [default_network] on Unix brings a --interface runtime
    argument that collides with dnsmasq arguments *)
