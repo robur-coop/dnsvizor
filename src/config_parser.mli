@@ -54,8 +54,9 @@ val domain_c : domain Cmdliner.Arg.conv
 val ignore_c : string -> string Cmdliner.Arg.conv
 
 type config =
-  [ `Dhcp_range of dhcp_range | `Domain of domain | `Dhcp_option of dhcp_option | `Dnssec | `Ignored ] list
+  [ `Dhcp_range of dhcp_range | `Dhcp_host of dhcp_host | `Domain of domain | `Dhcp_option of dhcp_option | `No_hosts | `Dnssec | `Ignored ] list
 
+val pp_config : [`File | `Arg ] -> config Fmt.t
 val parse_file : string -> (config, [> `Msg of string ]) result
 val arg_end_of_directive : unit Angstrom.t
 val parse_one : 'a Angstrom.t -> string -> ('a, [> `Msg of string ]) result
