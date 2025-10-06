@@ -1,4 +1,4 @@
 (library
  (name dnsvizor)
  (public_name dnsvizor)
- (libraries angstrom fmt ipaddr cmdliner logs ohex))
+ (libraries angstrom fmt ipaddr cmdliner logs ohex charrua))

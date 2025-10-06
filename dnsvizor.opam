@@ -26,6 +26,7 @@ depends: [
   "cmdliner" {>= "1.2.0"}
   "logs" {>= "0.7.0"}
   "ohex" {>= "0.2.0"}
+  "charrua" {>= "2.1.0"}
 
   "alcotest" {with-test & >= "1.8.0"}
 ]
