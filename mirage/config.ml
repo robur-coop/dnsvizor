@@ -17,7 +17,7 @@ let dnsvizor =
       package "dns-client-mirage";
       package "dnssec";
       package "dns-mirage";
-      package ~min:"10.2.1" ~sublibs:[ "mirage" ] "dns-resolver";
+      package ~min:"10.2.2" ~sublibs:[ "mirage" ; "mirage.shared" ] "dns-resolver";
       package ~min:"10.2.1" ~sublibs:[ "mirage" ] "dns-stub";
       package "dns-tsig";
       package "dns-server";
