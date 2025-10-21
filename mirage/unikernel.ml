@@ -1161,8 +1161,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         Lwt.join [ th; go (cert, dns_tls, tls) mvar ]
   end
 
-  module Dhcp_dns (Resolver : Dns_resolver_mirage_shared.S) =
-  struct
+  module Dhcp_dns (Resolver : Dns_resolver_mirage_shared.S) = struct
     let update_dns tcp lease name =
       match (K.dns_key (), K.dns_server ()) with
       | Some (key_name, key), Some ip ->
