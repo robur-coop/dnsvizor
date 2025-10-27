@@ -114,17 +114,6 @@ module K = struct
         Arg.info ~doc:"TODO dhcp-host description."
           ~docv:Config_parser.dhcp_host_docv ~docs:s_dnsmasq [ "dhcp-host" ]
       in
-      (*
-      let dhcp_host_c =
-        let parser s =
-          let p = Arg.conv_parser Config_parser.dhcp_host_c in
-          match p s with
-          | Error _ as err -> err
-          | Ok _ -> Error (`Msg "Don't know how to handle --dhcp-host (yet)")
-        in
-        Arg.conv (parser, Arg.conv_printer Config_parser.dhcp_host_c)
-      in
-         *)
       Arg.(value & opt (some Config_parser.dhcp_host_c) None doc)
 
     let dhcp_option =
@@ -132,21 +121,6 @@ module K = struct
         Arg.info ~doc:"TODO dhcp-option description."
           ~docv:Config_parser.dhcp_option_docv ~docs:s_dnsmasq [ "dhcp-option" ]
       in
-      (*
-      let dhcp_option_c =
-        let parser s =
-          match Arg.conv_parser Config_parser.dhcp_option_c s with
-          | Error _ as err -> err
-          | Ok { tags = _ :: _; _ } ->
-            Error (`Msg "Don't know how to handle tags in --dhcp-option (yet)")
-          | Ok { option = Dhcp_wire.Log_servers _; _ } as ok -> ok
-          | Ok ({ option = _; _ } as option) ->
-            Error (`Msg (Fmt.str "Don't know how to handle dhcp-option %a"
-                           Config_parser.pp_dhcp_option option))
-        in
-        Arg.conv (parser, Arg.conv_printer Config_parser.dhcp_option_c)
-      in
-         *)
       Arg.(value & opt (some Config_parser.dhcp_option_c) None doc)
 
     let domain =
