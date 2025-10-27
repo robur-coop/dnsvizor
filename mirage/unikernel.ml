@@ -107,7 +107,7 @@ module K = struct
         Arg.info ~doc:"Enable DHCP server." ~docv:Config_parser.dhcp_range_docv
           ~docs:s_dnsmasq [ "dhcp-range" ]
       in
-      Arg.(value & opt Config_parser.(some dhcp_range_c) None doc)
+      Arg.(value & opt (some Config_parser.dhcp_range_c) None doc)
 
     let dhcp_host =
       let doc =
@@ -128,7 +128,7 @@ module K = struct
         Arg.info ~doc:"Domain to use." ~docv:Config_parser.domain_docv
           ~docs:s_dnsmasq [ "domain" ]
       in
-      Arg.(value & opt Config_parser.(some domain_c) None doc)
+      Arg.(value & opt (some Config_parser.domain_c) None doc)
 
     (* various ignored DNSmasq configuration options *)
     let interface =
@@ -136,7 +136,7 @@ module K = struct
         Arg.info ~docs:Manpage.s_none ~doc:"Interface to listen on."
           [ "interface" ]
       in
-      Arg.(value & opt Config_parser.(some (ignore_c "interface")) None doc)
+      Arg.(value & opt (some (Config_parser.ignore_c "interface")) None doc)
 
     let except_interface =
       let doc =
