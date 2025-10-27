@@ -570,6 +570,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                Dhcp_wire.Domain_name (Domain_name.to_string domain))
              domain)
     in
+    (* TODO: what should be the max_lease_time? 2 * default_lease_time *)
     let dhcp_config =
       Dhcp_server.Config.make ?hostname:None ?default_lease_time
         ?max_lease_time:None ?hosts:None ~addr_tuple:(ipv4_address, mac)
