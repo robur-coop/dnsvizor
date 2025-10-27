@@ -423,10 +423,10 @@ let dhcp_opt_code =
   choice ~failure_msg:"option:" [ integer_opt; log_server ]
 
 let dhcp_opt =
-  dhcp_opt_code <* commit >>= function
+  dhcp_opt_code <* char ',' <* commit >>= function
   | Dhcp_wire.LOG_SERVERS ->
       Log.err (fun m -> m "LOG_SERVERS");
-      many1 (char ',' *> ipv4_dotted) <?> "log-servers ips"
+      sep_by1 (char ',') ipv4_dotted <?> "log-servers ips"
       >>= fun log_servers -> return (Dhcp_wire.Log_servers log_servers)
   | code ->
       Format.kasprintf fail "Unsupported dhcp option %s"
@@ -440,7 +440,7 @@ let dhcp_option end_of_directive =
 
 let pp_dhcp_opt ppf = function
   | Dhcp_wire.Log_servers log_servers ->
-      Fmt.pf ppf "log-servers,%a"
+      Fmt.pf ppf "log-server,%a"
         Fmt.(list ~sep:(any ",") Ipaddr.V4.pp)
         log_servers
   | _ -> assert false
