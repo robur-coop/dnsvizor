@@ -420,13 +420,18 @@ let dhcp_opt_code =
       | Some option_code -> return option_code
   in
   let log_server = string "log-server" *> return Dhcp_wire.LOG_SERVERS in
-  choice ~failure_msg:"option:" [ integer_opt; log_server ]
+  let router = string "router" *> return Dhcp_wire.ROUTERS in
+  choice ~failure_msg:"option:"
+    [ integer_opt; string "option:" *> commit *> choice [ log_server; router ] ]
 
 let dhcp_opt =
   dhcp_opt_code <* char ',' <* commit >>= function
   | Dhcp_wire.LOG_SERVERS ->
       sep_by1 (char ',') ipv4_dotted <?> "log-server ips" >>= fun log_servers ->
       return (Dhcp_wire.Log_servers log_servers)
+  | Dhcp_wire.ROUTERS ->
+      sep_by1 (char ',') ipv4_dotted <?> "router ips" >>= fun servers ->
+      return (Dhcp_wire.Routers servers)
   | code ->
       Format.kasprintf fail "Unsupported dhcp option %s"
         (Dhcp_wire.option_code_to_string code)
@@ -434,18 +439,23 @@ let dhcp_opt =
 let dhcp_option end_of_directive =
   (* [tag:<tag>,[tag:<tag>,]][encap:<opt>,][vi-encap:<enterprise>,][vendor:[<vendor-class>],][<opt>|option:<opt-name>|option6:<opt>|option6:<opt-name>],[<value>[,<value>]] *)
   many (tag_thing <* char ',') >>= fun tags ->
-  string "option:" *> commit *> dhcp_opt <* end_of_directive >>| fun option ->
-  { option; tags }
+  dhcp_opt <* end_of_directive >>| fun option -> { option; tags }
 
 let pp_dhcp_opt ppf = function
   | Dhcp_wire.Log_servers log_servers ->
-      Fmt.pf ppf "log-server,%a"
+      Fmt.pf ppf "option:log-server,%a"
         Fmt.(list ~sep:(any ",") Ipaddr.V4.pp)
         log_servers
-  | _ -> assert false
+  | Dhcp_wire.Routers servers ->
+      Fmt.pf ppf "option:router,%a"
+        Fmt.(list ~sep:(any ",") Ipaddr.V4.pp)
+        servers
+  | _ ->
+      (* TODO should print <ID>,<VAL> - but there's no dhcp_option_to_option_code in dhcp_wire *)
+      assert false
 
 let pp_dhcp_option ppf { tags; option } =
-  Fmt.pf ppf "%aoption:%a"
+  Fmt.pf ppf "%a%a"
     Fmt.(list ~sep:nop (string ++ any ","))
     tags pp_dhcp_opt option
 
