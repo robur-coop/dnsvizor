@@ -426,7 +426,7 @@ let dhcp_opt =
   dhcp_opt_code <* char ',' <* commit >>= function
   | Dhcp_wire.LOG_SERVERS ->
       Log.err (fun m -> m "LOG_SERVERS");
-      sep_by1 (char ',') ipv4_dotted <?> "log-servers ips"
+      sep_by1 (char ',') ipv4_dotted <?> "log-server ips"
       >>= fun log_servers -> return (Dhcp_wire.Log_servers log_servers)
   | code ->
       Format.kasprintf fail "Unsupported dhcp option %s"
