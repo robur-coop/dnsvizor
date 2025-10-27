@@ -493,7 +493,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `Dhcp_range
           ( { mode = Some _; _ }
           | { broadcast = Some _; _ }
-          | { lease_time = Some _; _ }
           | { netmask = Some _; _ } )
         :: _ ->
           Error "Unhandled dhcp-range option"
