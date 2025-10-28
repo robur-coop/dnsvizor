@@ -301,6 +301,31 @@ let ok_domain3 () =
     check (result domain_t msg_t) "Domain is good" (Ok expected)
       (parse_one_arg domain input))
 
+let option_t =
+  let equal a b =
+    List.for_all2 String.equal a.tags b.tags
+    && String.equal
+         (Dhcp_wire.dhcp_option_to_string a.option)
+         (Dhcp_wire.dhcp_option_to_string b.option)
+  in
+  Alcotest.testable pp_dhcp_option equal
+
+let ok_router () =
+  let input = "3,192.168.4.4" in
+  let expected =
+    {
+      tags = [];
+      option = Dhcp_wire.Routers [ Ipaddr.V4.of_string_exn "192.168.4.4" ];
+    }
+  in
+  Alcotest.(
+    check (result option_t msg_t) "DHCP option is good" (Ok expected)
+      (parse_one_arg dhcp_option input));
+  let input = "option:router,192.168.4.4" in
+  Alcotest.(
+    check (result option_t msg_t) "DHCP option is good" (Ok expected)
+      (parse_one_arg dhcp_option input))
+
 let tests =
   [
     ("DHCP range", `Quick, ok_dhcp_range);
@@ -316,6 +341,7 @@ let tests =
       ("Domain from example", `Quick, ok_domain);
       ("Domain from manpage", `Quick, ok_domain2);
       ("Domain with ip range", `Quick, ok_domain3);
+      ("DHCP option router", `Quick, ok_router);
     ]
 
 let string_of_file filename =
