@@ -121,7 +121,7 @@ module K = struct
         Arg.info ~doc:"TODO dhcp-option description."
           ~docv:Config_parser.dhcp_option_docv ~docs:s_dnsmasq [ "dhcp-option" ]
       in
-      Arg.(value & opt (some Config_parser.dhcp_option_c) None doc)
+      Arg.(value & opt_all Config_parser.dhcp_option_c [] doc)
 
     let domain =
       let doc =
@@ -207,11 +207,10 @@ module K = struct
     and+ dnssec = dnssec in
     Option.map (fun x -> `Dhcp_range x) dhcp_range
     @? Option.map (fun x -> `Dhcp_host x) dhcp_host
-    @? Option.map (fun x -> `Dhcp_option x) dhcp_option
     @? Option.map (fun x -> `Domain x) domain
     @? (if no_hosts then Some `No_hosts else None)
     @? (if dnssec then Some `Dnssec else None)
-    @? []
+    @? List.map (fun x -> `Dhcp_option x) dhcp_option
 
   let qname_minimisation =
     let doc =
