@@ -496,49 +496,60 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         :: _ ->
           Error "Unhandled dhcp-range option"
       | `Dhcp_range dhcp_range :: r ->
-          let dhcp_range', log_servers, domain, no_hosts, dnssec = acc in
+          let dhcp_range', dhcp_options, domain, no_hosts, dnssec, dhcp_hosts = acc in
           (* TODO: multiple ranges *)
           (* TODO: netmask *)
           let* () = unique dhcp_range' "dhcp-range" in
           let range =
             (dhcp_range.start_addr, dhcp_range.end_addr, dhcp_range.lease_time)
           in
-          gather (Some range, log_servers, domain, no_hosts, dnssec) r
+          gather (Some range, dhcp_options, domain, no_hosts, dnssec, dhcp_hosts) r
       | `Dhcp_option { tags = _ :: _; _ } :: _ ->
           Error "Don't know how to handle tags in --dhcp-option (yet)"
-      | `Dhcp_option ({ option = Dhcp_wire.Log_servers _; _ } as dhcp_option)
+      | `Dhcp_option ({ option = Dhcp_wire.Log_servers _ | Dhcp_wire.Routers _; _ } as dhcp_option)
         :: r ->
-          let dhcp_range, dhcp_option', domain, no_hosts, dnssec = acc in
-          let* () = unique dhcp_option' "dhcp-option log-server" in
+          let dhcp_range, dhcp_options, domain, no_hosts, dnssec, dhcp_hosts = acc in
           gather
-            (dhcp_range, Some dhcp_option.option, domain, no_hosts, dnssec)
+            (dhcp_range, dhcp_option.option :: dhcp_options, domain, no_hosts, dnssec, dhcp_hosts)
             r
       | `Dhcp_option ({ tags = []; option = _ } as dhcp_option) :: _ ->
           Error
             (Fmt.str "Don't know how to handle dhcp-option %a"
                Dnsvizor.Config_parser.pp_dhcp_option dhcp_option)
-      | `Dhcp_host _ :: _ -> Error "Don't know how to handle dhcp-host (yet)"
+      | `Dhcp_host { id = None; sets = []; tags = []; macs = [ hw_addr ]; ipv4 = fixed_addr; ipv6 = None; lease_time =None; ignore = false; domain_name = Some domain_name } :: r ->
+        let dhcp_range, dhcp_options, domain, no_hosts, dnssec, dhcp_hosts = acc in
+        let dhcp_host = {
+          Dhcp_server.Config.hostname = Domain_name.to_string domain_name;
+          options = [];
+          fixed_addr;
+          hw_addr;
+        } in
+        gather (dhcp_range, dhcp_options, domain, no_hosts, dnssec, dhcp_host :: dhcp_hosts) r
+      | (`Dhcp_host dhcp_host) :: _ ->
+        Error
+          (Format.asprintf "Don't know how to handle dhcp-host with these arguments: %a"
+             Dnsvizor.Config_parser.pp_dhcp_host dhcp_host)
       | `Domain (_, Some _) :: _ ->
           Error
             "Don't know how to handle domain with address range or interface"
       | `Domain (domain, None) :: r ->
-          let dhcp_range, log_servers, domain', no_hosts, dnssec = acc in
+          let dhcp_range, dhcp_options, domain', no_hosts, dnssec, dhcp_hosts = acc in
           let* () = unique domain' "domain" in
-          gather (dhcp_range, log_servers, Some domain, no_hosts, dnssec) r
+          gather (dhcp_range, dhcp_options, Some domain, no_hosts, dnssec, dhcp_hosts) r
       | `No_hosts :: r ->
-          let dhcp_range, dhcp_option, domain, _, dnssec = acc in
-          gather (dhcp_range, dhcp_option, domain, true, dnssec) r
+          let dhcp_range, dhcp_option, domain, _, dnssec, dhcp_hosts = acc in
+          gather (dhcp_range, dhcp_option, domain, true, dnssec, dhcp_hosts) r
       | `Dnssec :: r ->
-          let dhcp_range, dhcp_option, domain, no_hosts, _ = acc in
-          gather (dhcp_range, dhcp_option, domain, no_hosts, true) r
+          let dhcp_range, dhcp_option, domain, no_hosts, _, dhcp_hosts = acc in
+          gather (dhcp_range, dhcp_option, domain, no_hosts, true, dhcp_hosts) r
     in
-    gather (None, None, None, false, false) configuration
+    gather (None, [], None, false, false, []) configuration
 
   let dhcp_configuration_of mac config =
     let ( let* ) = Result.bind in
     let ipv4 = K.ipv4 () in
     let ipv4_address = Ipaddr.V4.Prefix.address ipv4 in
-    let* range, log_servers, domain, no_hosts, dnssec = process_config config in
+    let* range, dhcp_options, domain, no_hosts, dnssec, dhcp_hosts = process_config config in
     let* range, default_lease_time =
       match range with
       | None -> Ok (None, None)
@@ -562,7 +573,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | None -> []
       | Some x -> [ Dhcp_wire.Routers [ x ] ])
       @ [ Dhcp_wire.Dns_servers [ ipv4_address ] ]
-      @ Option.to_list log_servers
+      @ dhcp_options
       @ Option.to_list
           (Option.map
              (fun domain ->
@@ -572,7 +583,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     (* TODO: what should be the max_lease_time? 2 * default_lease_time *)
     let dhcp_config =
       Dhcp_server.Config.make ?hostname:None ?default_lease_time
-        ?max_lease_time:None ?hosts:None ~addr_tuple:(ipv4_address, mac)
+        ?max_lease_time:None ~hosts:dhcp_hosts
+        ~addr_tuple:(ipv4_address, mac)
         ~network:(Ipaddr.V4.Prefix.prefix ipv4)
         ~range ~options ()
     in
