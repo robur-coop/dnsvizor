@@ -62,17 +62,8 @@ let statistics_page (clients, queries, blocked_requests, errors)
                        div
                          ~a:
                            [
-                             (let bg =
-                                match i mod 4 with
-                                | 0 -> "bg-cyan-500"
-                                | 1 -> "bg-cyan-600"
-                                | 2 -> "bg-cyan-700"
-                                | _ -> "bg-cyan-800"
-                              in
-                              a_class
-                                [
-                                  Fmt.str "%s text-white p-6 rounded shadow" bg;
-                                ]);
+                             a_class
+                               [ "text-white p-6 rounded shadow bg-cyan-800" ];
                            ]
                          [
                            div ~a:[ a_class [ "text-sm" ] ] [ txt heading ];
