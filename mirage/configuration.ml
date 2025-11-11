@@ -58,6 +58,8 @@ let configuration_page config =
                         div
                           ~a:
                             [
+                              a_role [ "button" ];
+                              a_tabindex 0;
                               a_onclick
                                 "document.getElementById('dnsmasq_config_file').click()";
                               (* JavaScript to click the hidden input *)
