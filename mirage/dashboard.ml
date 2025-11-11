@@ -38,6 +38,18 @@ let dashboard_layout ?(page_title = "Dashboard | DNSvizor") ~content () =
                          a
                            ~a:
                              [
+                               a_href "#main-content";
+                               a_class
+                                 [
+                                   "focus:absolute bg-cyan-700 \
+                                    hover:bg-cyan-200 text-white px-4 py-2 \
+                                    rounded z-50";
+                                 ];
+                             ]
+                           [ txt "Skip to main content" ];
+                         a
+                           ~a:
+                             [
                                a_href "/dashboard";
                                a_class
                                  [
@@ -108,7 +120,7 @@ let dashboard_layout ?(page_title = "Dashboard | DNSvizor") ~content () =
                                      ];
                                  ]
                                [];
-                             span [ txt "Block list" ];
+                             span [ txt "Blocklist" ];
                            ];
                          a
                            ~a:
@@ -135,7 +147,7 @@ let dashboard_layout ?(page_title = "Dashboard | DNSvizor") ~content () =
                        ];
                    ];
                  section
-                   ~a:[ a_class [ "col-span-10" ] ]
+                   ~a:[ a_class [ "col-span-10" ]; a_id "main-content" ]
                    [
                      div
                        ~a:

@@ -94,7 +94,7 @@ let delete_button domain =
           Fmt.kstr a_formaction "/blocklist/delete/%a" Domain_name.pp domain;
           a_class
             [
-              "bg-red-500 hover:bg-red-600 text-white font-bold py-1 px-2 \
+              "bg-red-900 hover:bg-red-500 text-white font-bold py-1 px-2 \
                rounded transition duration-200";
               "focus:outline-none focus:ring-2 focus:ring-red-400";
             ];
@@ -153,7 +153,7 @@ let block_page (manual_blocked_domains, lists) =
                         [
                           a_class
                             [
-                              "bg-cyan-500 hover:bg-cyan-600 text-white \
+                              "bg-cyan-900 hover:bg-cyan-500 text-white \
                                font-semibold px-4 py-2 rounded transition \
                                duration-200";
                             ];

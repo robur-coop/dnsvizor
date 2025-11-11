@@ -58,6 +58,8 @@ let configuration_page config =
                         div
                           ~a:
                             [
+                              a_role [ "button" ];
+                              a_tabindex 0;
                               a_onclick
                                 "document.getElementById('dnsmasq_config_file').click()";
                               (* JavaScript to click the hidden input *)
@@ -117,8 +119,8 @@ let configuration_page config =
                             [
                               a_class
                                 [
-                                  "px-6 py-2 bg-cyan-600 text-white rounded-md \
-                                   hover:bg-cyan-700 focus:outline-none \
+                                  "px-6 py-2 bg-cyan-900 text-white rounded-md \
+                                   hover:bg-cyan-500 focus:outline-none \
                                    focus:ring-2 focus:ring-cyan-500 \
                                    focus:ring-opacity-50";
                                 ];
