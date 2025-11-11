@@ -172,7 +172,7 @@ let footer =
                       ~a:
                         [
                           a_href "/";
-                          a_class [ "hover:text-cyan-500 transition-colors" ];
+                          a_class [ "hover:text-cyan-500 transition-colors text-nowrap" ];
                         ]
                       [ txt "Terms of service" ];
                   ];
