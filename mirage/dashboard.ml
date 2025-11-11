@@ -108,7 +108,7 @@ let dashboard_layout ?(page_title = "Dashboard | DNSvizor") ~content () =
                                      ];
                                  ]
                                [];
-                             span [ txt "Block list" ];
+                             span [ txt "Blocklist" ];
                            ];
                          a
                            ~a:
