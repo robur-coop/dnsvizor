@@ -50,7 +50,7 @@ let footer =
                     a
                       ~a:
                         [
-                          a_href "/about";
+                          a_href "https://robur.coop/About%20Us";
                           a_class [ "hover:text-cyan-500 transition-colors" ];
                         ]
                       [ txt "About" ];
@@ -78,13 +78,6 @@ let footer =
                 dd
                   ~a:[ a_class [ "font-medium flex flex-col items-start" ] ]
                   [
-                    a
-                      ~a:
-                        [
-                          a_href "/";
-                          a_class [ "hover:text-cyan-500 transition-colors" ];
-                        ]
-                      [ txt "Docs" ];
                     a
                       ~a:
                         [
@@ -119,62 +112,17 @@ let footer =
                     a
                       ~a:
                         [
-                          a_href "https://github.com/robur-coop/mollymawk";
+                          a_href "https://github.com/robur-coop/dnsvizor";
                           a_class [ "hover:text-cyan-500 transition-colors" ];
                         ]
                       [ txt "GitHub" ];
                     a
                       ~a:
                         [
-                          a_href "/";
+                          a_href "mailto:team@robur.coop";
                           a_class [ "hover:text-cyan-500 transition-colors" ];
                         ]
-                      [ txt "Matrix.org" ];
-                    a
-                      ~a:
-                        [
-                          a_href "/";
-                          a_class [ "hover:text-cyan-500 transition-colors" ];
-                        ]
-                      [ txt "Mastodon" ];
-                  ];
-              ];
-            dl
-              [
-                dt
-                  ~a:
-                    [
-                      a_class
-                        [
-                          "font-bold uppercase tracking-wider text-xs \
-                           text-white mb-3";
-                        ];
-                    ]
-                  [ txt "Legal" ];
-                dd
-                  ~a:[ a_class [ "font-medium flex flex-col items-start" ] ]
-                  [
-                    a
-                      ~a:
-                        [
-                          a_href "/";
-                          a_class [ "hover:text-cyan-500 transition-colors" ];
-                        ]
-                      [ txt "Security" ];
-                    a
-                      ~a:
-                        [
-                          a_href "/";
-                          a_class [ "hover:text-cyan-500 transition-colors" ];
-                        ]
-                      [ txt "Privacy policy" ];
-                    a
-                      ~a:
-                        [
-                          a_href "/";
-                          a_class [ "hover:text-cyan-500 transition-colors text-nowrap" ];
-                        ]
-                      [ txt "Terms of service" ];
+                      [ txt "Email" ];
                   ];
               ];
           ];
