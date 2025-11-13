@@ -159,6 +159,7 @@ let dashboard_layout ?(page_title = "Dashboard | DNSvizor") ~content () =
                                        "hover:text-cyan-500";
                                        "active:text-cyan-500";
                                      ];
+                                   a_aria "label" [ "Toggle sidebar" ];
                                  ]
                                [
                                  i
