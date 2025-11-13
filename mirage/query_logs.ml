@@ -12,11 +12,23 @@ let query_page =
             section
               ~a:[ a_class [ "px-4 py-6 w-full" ] ]
               [
-                h2
-                  ~a:[ a_class [ "text-xl font-bold text-cyan-800 mb-4" ] ]
+                div
+                  ~a:[ a_class [ "flex justify-between items-center mb-6" ] ]
                   [
-                    txt "Recent Queries (showing up to 100 queries), ";
-                    a ~a:[ a_href "/all-queries" ] [ txt "show all" ];
+                    h2
+                      ~a:[ a_class [ "text-xl font-bold text-cyan-800 mb-4" ] ]
+                      [ txt "Recent Queries (showing up to 100 queries), " ];
+                    a
+                      ~a:
+                        [
+                          a_href "/all-queries";
+                          a_class
+                            [
+                              "text-xl bg-cyan-800 text-white \
+                               hover:bg-cyan-600 p-2 rounded-md font-semibold";
+                            ];
+                        ]
+                      [ txt "Show all queries" ];
                   ];
                 div
                   ~a:[ a_class [ "mb-4 flex items-center" ] ]
