@@ -27,7 +27,7 @@ let statistics_page (clients, queries, blocked_requests, errors)
   in
   Tyxml_html.(
     main
-      ~a:[ a_class [ "w-full text-gray-900" ] ]
+      ~a:[ a_tabindex (-1); a_class [ "w-full text-gray-900" ] ]
       [
         section
           ~a:
