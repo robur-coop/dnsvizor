@@ -17,7 +17,7 @@ let query_page =
                   [
                     h2
                       ~a:[ a_class [ "text-xl font-bold text-cyan-800 mb-4" ] ]
-                      [ txt "Recent Queries (showing up to 100 queries), " ];
+                      [ txt "Recent Queries (showing up to 100 queries)" ];
                     a
                       ~a:
                         [
@@ -87,7 +87,11 @@ let query_page =
                               [ txt "2018-12-19 17:49:46" ];
                             td ~a:[ a_class [ "p-2" ] ] [ txt "A" ];
                             td
-                              ~a:[ a_class [ "p-2 text-green-700" ] ]
+                              ~a:
+                                [
+                                  a_class [ "p-2 text-green-700" ];
+                                  a_id "domain-name";
+                                ]
                               [ txt "next.robur.coop" ];
                             td ~a:[ a_class [ "p-2" ] ] [ txt "192.168.1.131" ];
                             td
@@ -97,16 +101,39 @@ let query_page =
                             td
                               ~a:[ a_class [ "p-2" ] ]
                               [
-                                button
+                                form
                                   ~a:
                                     [
-                                      a_class
-                                        [
-                                          "text-red-600 border border-red-600 \
-                                           rounded px-2";
-                                        ];
+                                      a_action "/blocklist/add";
+                                      a_method `Post;
+                                      a_enctype "multipart/form-data";
+                                      a_class [ "flex mb-4 gap-2" ];
+                                      a_onsubmit
+                                        "document.getElementById('domain-input').value \
+                                         = \
+                                         document.getElementById('domain-name').innerText";
                                     ]
-                                  [ txt "Block" ];
+                                  [
+                                    input
+                                      ~a:
+                                        [
+                                          a_input_type `Hidden;
+                                          a_name "domain";
+                                          a_id "domain-input";
+                                        ]
+                                      ();
+                                    button
+                                      ~a:
+                                        [
+                                          a_class
+                                            [
+                                              "text-red-600 border \
+                                               hover:bg-red-100 border-red-600 \
+                                               rounded p-2 cursor-pointer";
+                                            ];
+                                        ]
+                                      [ txt "Block" ];
+                                  ];
                               ];
                           ];
                         (* TODO: Additional rows would be appended dynamically *)
