@@ -44,16 +44,6 @@ let statistics_page (clients, queries, blocked_requests, errors)
                     h2
                       ~a:[ a_class [ "text-2xl font-bold" ] ]
                       [ txt "Dashboard" ];
-                    span
-                      ~a:
-                        [
-                          a_class
-                            [
-                              "bg-red-200 text-red-700 px-2 py-1 rounded \
-                               text-sm";
-                            ];
-                        ]
-                      [ txt "Robur" ];
                   ];
                 div
                   ~a:[ a_class [ "grid grid-cols-4 gap-4" ] ]
