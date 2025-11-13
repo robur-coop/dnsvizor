@@ -1,3 +1,8 @@
+let pagination_css =
+  "px-2 py-1 border rounded active:bg-cyan-600 hover:bg-cyan-300 \
+   cursor-pointer focus-visible:outline focus-visible:outline-4 \
+   focus-visible:outline-cyan-400 focus-visible:outline-offset-2"
+
 let query_page =
   Tyxml_html.(
     main
@@ -177,24 +182,14 @@ let query_page =
                         ]
                       [
                         button
-                          ~a:
-                            [
-                              a_class
-                                [ "px-2 py-1 border rounded text-gray-800" ];
-                            ]
+                          ~a:[ a_class [ pagination_css ] ]
                           [ txt "Previous" ];
                         List.init 5 (fun i ->
                             button
-                              ~a:[ a_class [ "px-2 py-1 border rounded" ] ]
+                              ~a:[ a_class [ pagination_css ] ]
                               [ txt (string_of_int (i + 1)) ])
                         |> Tyxml.Html.div;
-                        button
-                          ~a:
-                            [
-                              a_class
-                                [ "px-2 py-1 border rounded text-gray-800" ];
-                            ]
-                          [ txt "Next" ];
+                        button ~a:[ a_class [ pagination_css ] ] [ txt "Next" ];
                       ];
                   ];
               ];
