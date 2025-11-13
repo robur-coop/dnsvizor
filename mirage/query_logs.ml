@@ -1,3 +1,8 @@
+let pagination_css =
+  "px-2 py-1 border rounded active:bg-cyan-600 hover:bg-cyan-300 \
+   cursor-pointer focus-visible:outline focus-visible:outline-4 \
+   focus-visible:outline-cyan-400 focus-visible:outline-offset-2"
+
 let query_page =
   Tyxml_html.(
     main
@@ -12,18 +17,35 @@ let query_page =
             section
               ~a:[ a_class [ "px-4 py-6 w-full" ] ]
               [
-                h2
-                  ~a:[ a_class [ "text-xl font-bold text-cyan-800 mb-4" ] ]
+                div
+                  ~a:[ a_class [ "flex justify-between items-center mb-6" ] ]
                   [
-                    txt "Recent Queries (showing up to 100 queries), ";
-                    a ~a:[ a_href "/all-queries" ] [ txt "show all" ];
+                    h2
+                      ~a:[ a_class [ "text-xl font-bold text-cyan-800 mb-4" ] ]
+                      [ txt "Recent Queries (showing up to 100 queries)" ];
+                    a
+                      ~a:
+                        [
+                          a_href "/all-queries";
+                          a_class
+                            [
+                              "text-xl bg-cyan-800 text-white \
+                               hover:bg-cyan-600 p-2 rounded-md font-semibold";
+                            ];
+                        ]
+                      [ txt "Show all queries" ];
                   ];
                 div
                   ~a:[ a_class [ "mb-4 flex items-center" ] ]
                   [
                     label ~a:[ a_class [ "mr-2" ] ] [ txt "Show" ];
                     select
-                      ~a:[ a_class [ "border rounded p-1" ] ]
+                      ~a:
+                        [
+                          a_class [ "border rounded p-1" ];
+                          a_name "entries_per_page";
+                          a_aria "label" [ "Entries per page" ];
+                        ]
                       (List.map
                          (fun n ->
                            option
@@ -71,30 +93,58 @@ let query_page =
                         tr
                           [
                             td
-                              ~a:[ a_class [ "p-2 text-green-600" ] ]
+                              ~a:[ a_class [ "p-2 text-green-800" ] ]
                               [ txt "2018-12-19 17:49:46" ];
                             td ~a:[ a_class [ "p-2" ] ] [ txt "A" ];
                             td
-                              ~a:[ a_class [ "p-2 text-green-700" ] ]
+                              ~a:
+                                [
+                                  a_class [ "p-2 text-green-800" ];
+                                  a_id "domain-name";
+                                ]
                               [ txt "next.robur.coop" ];
                             td ~a:[ a_class [ "p-2" ] ] [ txt "192.168.1.131" ];
                             td
-                              ~a:[ a_class [ "p-2 text-green-600" ] ]
+                              ~a:[ a_class [ "p-2 text-green-800" ] ]
                               [ txt "OK (forwarded)" ];
                             td ~a:[ a_class [ "p-2" ] ] [ txt "CNAME (25.0ms)" ];
                             td
                               ~a:[ a_class [ "p-2" ] ]
                               [
-                                button
+                                form
                                   ~a:
                                     [
-                                      a_class
-                                        [
-                                          "text-red-600 border border-red-600 \
-                                           rounded px-2";
-                                        ];
+                                      a_action "/blocklist/add";
+                                      a_method `Post;
+                                      a_enctype "multipart/form-data";
+                                      a_class [ "flex mb-4 gap-2" ];
+                                      a_onsubmit
+                                        "document.getElementById('domain-input').value \
+                                         = \
+                                         document.getElementById('domain-name').innerText";
                                     ]
-                                  [ txt "Block" ];
+                                  [
+                                    input
+                                      ~a:
+                                        [
+                                          a_input_type `Hidden;
+                                          a_name "domain";
+                                          a_id "domain-input";
+                                        ]
+                                      ();
+                                    button
+                                      ~a:
+                                        [
+                                          a_class
+                                            [
+                                              "text-white border font-semibold \
+                                               hover:bg-red-100 \
+                                               hover:text-red-800 bg-red-800 \
+                                               rounded p-2 cursor-pointer";
+                                            ];
+                                        ]
+                                      [ txt "Block" ];
+                                  ];
                               ];
                           ];
                         (* TODO: Additional rows would be appended dynamically *)
@@ -103,7 +153,15 @@ let query_page =
                 div
                   ~a:[ a_class [ "mt-4 text-sm" ] ]
                   [
-                    input ~a:[ a_input_type `Checkbox; a_checked () ] ();
+                    input
+                      ~a:
+                        [
+                          a_name "apply_filtering";
+                          a_input_type `Checkbox;
+                          a_checked ();
+                          a_aria "label" [ "Apply Filtering" ];
+                        ]
+                      ();
                     label
                       ~a:[ a_class [ "ml-2" ] ]
                       [
@@ -124,24 +182,14 @@ let query_page =
                         ]
                       [
                         button
-                          ~a:
-                            [
-                              a_class
-                                [ "px-2 py-1 border rounded text-gray-500" ];
-                            ]
+                          ~a:[ a_class [ pagination_css ] ]
                           [ txt "Previous" ];
                         List.init 5 (fun i ->
                             button
-                              ~a:[ a_class [ "px-2 py-1 border rounded" ] ]
+                              ~a:[ a_class [ pagination_css ] ]
                               [ txt (string_of_int (i + 1)) ])
                         |> Tyxml.Html.div;
-                        button
-                          ~a:
-                            [
-                              a_class
-                                [ "px-2 py-1 border rounded text-gray-500" ];
-                            ]
-                          [ txt "Next" ];
+                        button ~a:[ a_class [ pagination_css ] ] [ txt "Next" ];
                       ];
                   ];
               ];

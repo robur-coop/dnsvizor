@@ -27,7 +27,7 @@ let statistics_page (clients, queries, blocked_requests, errors)
   in
   Tyxml_html.(
     main
-      ~a:[ a_class [ "w-full text-gray-900" ] ]
+      ~a:[ a_tabindex (-1); a_class [ "w-full text-gray-900" ] ]
       [
         section
           ~a:
@@ -44,19 +44,9 @@ let statistics_page (clients, queries, blocked_requests, errors)
                     h2
                       ~a:[ a_class [ "text-2xl font-bold" ] ]
                       [ txt "Dashboard" ];
-                    span
-                      ~a:
-                        [
-                          a_class
-                            [
-                              "bg-red-200 text-red-700 px-2 py-1 rounded \
-                               text-sm";
-                            ];
-                        ]
-                      [ txt "Robur" ];
                   ];
                 div
-                  ~a:[ a_class [ "grid grid-cols-4 gap-4" ] ]
+                  ~a:[ a_class [ "grid md:grid-cols-4 grid-cols-1 gap-4" ] ]
                   (List.mapi
                      (fun i (heading, data) ->
                        div
@@ -66,9 +56,11 @@ let statistics_page (clients, queries, blocked_requests, errors)
                                [ "text-white p-6 rounded shadow bg-cyan-800" ];
                            ]
                          [
-                           div ~a:[ a_class [ "text-sm" ] ] [ txt heading ];
                            div
-                             ~a:[ a_class [ "text-2xl font-bold" ] ]
+                             ~a:[ a_class [ "text-md font-semibold" ] ]
+                             [ txt heading ];
+                           div
+                             ~a:[ a_class [ "md:text-3xl text-xl font-bold" ] ]
                              [ txt data ];
                          ])
                      elts);
