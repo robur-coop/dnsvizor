@@ -127,8 +127,9 @@ let query_page =
                                         [
                                           a_class
                                             [
-                                              "text-red-600 border \
-                                               hover:bg-red-100 border-red-600 \
+                                              "text-white border font-semibold \
+                                               hover:bg-red-100 \
+                                               hover:text-red-800 bg-red-800 \
                                                rounded p-2 cursor-pointer";
                                             ];
                                         ]
