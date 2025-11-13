@@ -46,7 +46,7 @@ let statistics_page (clients, queries, blocked_requests, errors)
                       [ txt "Dashboard" ];
                   ];
                 div
-                  ~a:[ a_class [ "grid grid-cols-4 gap-4" ] ]
+                  ~a:[ a_class [ "grid md:grid-cols-4 grid-cols-1 gap-4" ] ]
                   (List.mapi
                      (fun i (heading, data) ->
                        div
@@ -60,7 +60,7 @@ let statistics_page (clients, queries, blocked_requests, errors)
                              ~a:[ a_class [ "text-md font-semibold" ] ]
                              [ txt heading ];
                            div
-                             ~a:[ a_class [ "text-3xl font-bold" ] ]
+                             ~a:[ a_class [ "md:text-3xl text-xl font-bold" ] ]
                              [ txt data ];
                          ])
                      elts);
