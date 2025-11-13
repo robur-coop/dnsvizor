@@ -88,19 +88,19 @@ let query_page =
                         tr
                           [
                             td
-                              ~a:[ a_class [ "p-2 text-green-600" ] ]
+                              ~a:[ a_class [ "p-2 text-green-800" ] ]
                               [ txt "2018-12-19 17:49:46" ];
                             td ~a:[ a_class [ "p-2" ] ] [ txt "A" ];
                             td
                               ~a:
                                 [
-                                  a_class [ "p-2 text-green-700" ];
+                                  a_class [ "p-2 text-green-800" ];
                                   a_id "domain-name";
                                 ]
                               [ txt "next.robur.coop" ];
                             td ~a:[ a_class [ "p-2" ] ] [ txt "192.168.1.131" ];
                             td
-                              ~a:[ a_class [ "p-2 text-green-600" ] ]
+                              ~a:[ a_class [ "p-2 text-green-800" ] ]
                               [ txt "OK (forwarded)" ];
                             td ~a:[ a_class [ "p-2" ] ] [ txt "CNAME (25.0ms)" ];
                             td
