@@ -4,6 +4,7 @@ let dashboard_layout ?(page_title = "Dashboard | DNSvizor") ~content () =
   let page =
     Html.(
       html
+        ~a:[ a_lang "en" ]
         (Header_layout.header ~page_title ())
         (body
            [
