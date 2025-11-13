@@ -180,7 +180,7 @@ let query_page =
                           ~a:
                             [
                               a_class
-                                [ "px-2 py-1 border rounded text-gray-500" ];
+                                [ "px-2 py-1 border rounded text-gray-800" ];
                             ]
                           [ txt "Previous" ];
                         List.init 5 (fun i ->
@@ -192,7 +192,7 @@ let query_page =
                           ~a:
                             [
                               a_class
-                                [ "px-2 py-1 border rounded text-gray-500" ];
+                                [ "px-2 py-1 border rounded text-gray-800" ];
                             ]
                           [ txt "Next" ];
                       ];
