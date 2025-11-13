@@ -35,7 +35,12 @@ let query_page =
                   [
                     label ~a:[ a_class [ "mr-2" ] ] [ txt "Show" ];
                     select
-                      ~a:[ a_class [ "border rounded p-1" ] ]
+                      ~a:
+                        [
+                          a_class [ "border rounded p-1" ];
+                          a_name "entries_per_page";
+                          a_aria "label" [ "Entries per page" ];
+                        ]
                       (List.map
                          (fun n ->
                            option
@@ -143,7 +148,15 @@ let query_page =
                 div
                   ~a:[ a_class [ "mt-4 text-sm" ] ]
                   [
-                    input ~a:[ a_input_type `Checkbox; a_checked () ] ();
+                    input
+                      ~a:
+                        [
+                          a_name "apply_filtering";
+                          a_input_type `Checkbox;
+                          a_checked ();
+                          a_aria "label" [ "Apply Filtering" ];
+                        ]
+                      ();
                     label
                       ~a:[ a_class [ "ml-2" ] ]
                       [
