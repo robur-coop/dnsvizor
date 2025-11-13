@@ -56,9 +56,9 @@ let statistics_page (clients, queries, blocked_requests, errors)
                                [ "text-white p-6 rounded shadow bg-cyan-800" ];
                            ]
                          [
-                           div ~a:[ a_class [ "text-sm" ] ] [ txt heading ];
+                           div ~a:[ a_class [ "text-md font-semibold" ] ] [ txt heading ];
                            div
-                             ~a:[ a_class [ "text-2xl font-bold" ] ]
+                             ~a:[ a_class [ "text-3xl font-bold" ] ]
                              [ txt data ];
                          ])
                      elts);
