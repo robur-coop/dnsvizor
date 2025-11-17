@@ -11,8 +11,8 @@ let sidebar =
               a_href "#main-content";
               a_class
                 [
-                  "focus:absolute bg-cyan-700 hover:bg-cyan-200 text-white \
-                   px-4 py-2 rounded md:block hidden";
+                  "absolute left-0 top-0 bg-cyan-500 text-white py-2 px-4 z-50 \
+                   transform -translate-y-full focus:translate-y-0 transition";
                 ];
             ]
           [ txt "Skip to main content" ];
