@@ -35,16 +35,21 @@ let query_page =
                         ]
                       [ txt "Show all queries" ];
                   ];
-                div
-                  ~a:[ a_class [ "mb-4 flex items-center" ] ]
+                label
+                  ~a:
+                    [
+                      a_class [ "mb-4 flex items-center space-x-2" ];
+                      a_label_for "select-entries";
+                    ]
                   [
-                    label ~a:[ a_class [ "mr-2" ] ] [ txt "Show" ];
+                    span [ txt "Show" ];
                     select
                       ~a:
                         [
-                          a_class [ "border rounded p-1" ];
+                          a_class [ "rounded-md p-1 border border-cyan-800" ];
                           a_name "entries_per_page";
                           a_aria "label" [ "Entries per page" ];
+                          a_id "select-entries";
                         ]
                       (List.map
                          (fun n ->
@@ -52,7 +57,7 @@ let query_page =
                              ~a:[ a_value (string_of_int n) ]
                              (txt (string_of_int n)))
                          [ 10; 25; 50; 100 ]);
-                    span ~a:[ a_class [ "ml-2" ] ] [ txt "entries" ];
+                    span [ txt "entries" ];
                   ];
                 div
                   ~a:[ a_class [ "overflow-x-auto" ] ]
