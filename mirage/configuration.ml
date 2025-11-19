@@ -97,6 +97,7 @@ let configuration_page config =
                         textarea
                           ~a:
                             [
+                              a_aria "label" [ "DNSvizor Configuration" ];
                               a_id "dnsmasq_config";
                               a_name "dnsmasq_config";
                               a_rows 15;
