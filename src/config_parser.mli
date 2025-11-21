@@ -30,7 +30,7 @@ val pp_dhcp_host : dhcp_host Fmt.t
 val dhcp_host_docv : string
 val dhcp_host_c : dhcp_host Cmdliner.Arg.conv
 
-type dhcp_option = { tags : string list; option : Dhcp_wire.dhcp_option }
+type dhcp_option = { tags : string list; vendor : string option; option : Dhcp_wire.dhcp_option }
 
 val dhcp_option : unit Angstrom.t -> dhcp_option Angstrom.t
 val pp_dhcp_option : dhcp_option Fmt.t

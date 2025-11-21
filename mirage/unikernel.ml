@@ -479,6 +479,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
   type t = { net : Net.t; mac : Macaddr.t; mutable configuration : string }
 
+  type intermediate_config = {
+    dhcp_range : (Ipaddr.V4.t * Ipaddr.V4.t option * int option) option;
+    dhcp_options : Dhcp_wire.dhcp_option list;
+    domain : [`raw] Domain_name.t option;
+    no_hosts : bool;
+    dnssec : bool;
+  }
+
   let process_config configuration =
     let ( let* ) = Result.bind in
     let unique x item =
@@ -496,23 +504,20 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         :: _ ->
           Error "Unhandled dhcp-range option"
       | `Dhcp_range dhcp_range :: r ->
-          let dhcp_range', log_servers, domain, no_hosts, dnssec = acc in
           (* TODO: multiple ranges *)
           (* TODO: netmask *)
-          let* () = unique dhcp_range' "dhcp-range" in
+          let* () = unique acc.dhcp_range "dhcp-range" in
           let range =
             (dhcp_range.start_addr, dhcp_range.end_addr, dhcp_range.lease_time)
           in
-          gather (Some range, log_servers, domain, no_hosts, dnssec) r
+          gather { acc with dhcp_range = Some range } r
       | `Dhcp_option { tags = _ :: _; _ } :: _ ->
           Error "Don't know how to handle tags in --dhcp-option (yet)"
+      | `Dhcp_option { vendor = Some _; _ } :: _ ->
+          Error "Don't know how to handle vendor in --dhcp-option (yet)"
       | `Dhcp_option ({ option = Dhcp_wire.Log_servers _; _ } as dhcp_option)
         :: r ->
-          let dhcp_range, dhcp_option', domain, no_hosts, dnssec = acc in
-          let* () = unique dhcp_option' "dhcp-option log-server" in
-          gather
-            (dhcp_range, Some dhcp_option.option, domain, no_hosts, dnssec)
-            r
+        gather { acc with dhcp_options = dhcp_option.option :: acc.dhcp_options } r
       | `Dhcp_option ({ tags = []; option = _ } as dhcp_option) :: _ ->
           Error
             (Fmt.str "Don't know how to handle dhcp-option %a"
@@ -522,23 +527,24 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Error
             "Don't know how to handle domain with address range or interface"
       | `Domain (domain, None) :: r ->
-          let dhcp_range, log_servers, domain', no_hosts, dnssec = acc in
-          let* () = unique domain' "domain" in
-          gather (dhcp_range, log_servers, Some domain, no_hosts, dnssec) r
+          let* () = unique acc.domain "domain" in
+          gather { acc with domain = Some domain } r
       | `No_hosts :: r ->
-          let dhcp_range, dhcp_option, domain, _, dnssec = acc in
-          gather (dhcp_range, dhcp_option, domain, true, dnssec) r
+          gather { acc with no_hosts = true } r
       | `Dnssec :: r ->
-          let dhcp_range, dhcp_option, domain, no_hosts, _ = acc in
-          gather (dhcp_range, dhcp_option, domain, no_hosts, true) r
+          gather { acc with dnssec = true } r
     in
-    gather (None, None, None, false, false) configuration
+    gather
+      { dhcp_range = None; dhcp_options = []; domain = None; no_hosts = false; dnssec = false }
+      configuration
 
   let dhcp_configuration_of mac config =
     let ( let* ) = Result.bind in
     let ipv4 = K.ipv4 () in
     let ipv4_address = Ipaddr.V4.Prefix.address ipv4 in
-    let* range, log_servers, domain, no_hosts, dnssec = process_config config in
+    let* { dhcp_range = range; dhcp_options = log_servers; domain; no_hosts; dnssec } =
+      process_config config
+    in
     let* range, default_lease_time =
       match range with
       | None -> Ok (None, None)
@@ -562,7 +568,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | None -> []
       | Some x -> [ Dhcp_wire.Routers [ x ] ])
       @ [ Dhcp_wire.Dns_servers [ ipv4_address ] ]
-      @ Option.to_list log_servers
+      @ log_servers
       @ Option.to_list
           (Option.map
              (fun domain ->
