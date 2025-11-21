@@ -515,7 +515,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Error "Don't know how to handle tags in --dhcp-option (yet)"
       | `Dhcp_option { vendor = Some _; _ } :: _ ->
           Error "Don't know how to handle vendor in --dhcp-option (yet)"
-      | `Dhcp_option ({ option = Dhcp_wire.Log_servers _; _ } as dhcp_option)
+      | `Dhcp_option ({ option = Dhcp_wire.Log_servers _ | Dhcp_wire.Vendor_specific _; _ } as dhcp_option)
         :: r ->
         gather { acc with dhcp_options = dhcp_option.option :: acc.dhcp_options } r
       | `Dhcp_option ({ tags = []; option = _ } as dhcp_option) :: _ ->
