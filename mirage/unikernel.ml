@@ -484,9 +484,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   type t = { net : Net.t; mac : Macaddr.t; mutable configuration : string }
 
   type intermediate_config = {
-    dhcp_hosts : (Macaddr.t list * string * Ipaddr.V4.t option) list;
+    dhcp_hosts :
+      (string list * Macaddr.t list * string * Ipaddr.V4.t option) list;
     dhcp_range : (Ipaddr.V4.t * Ipaddr.V4.t option * int option) option;
     dhcp_options : Dhcp_wire.dhcp_option list;
+    tagged_dhcp_options : Dhcp_wire.dhcp_option list Map.t;
     domain : [ `raw ] Domain_name.t option;
     no_hosts : bool;
     dnssec : bool;
@@ -516,33 +518,48 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (dhcp_range.start_addr, dhcp_range.end_addr, dhcp_range.lease_time)
           in
           gather { acc with dhcp_range = Some range } r
-      | `Dhcp_option { tags = _ :: _; _ } :: _ ->
-          Error "Don't know how to handle tags in --dhcp-option (yet)"
       | `Dhcp_option { vendor = Some _; _ } :: _ ->
           Error "Don't know how to handle vendor in --dhcp-option (yet)"
       | `Dhcp_option
-          ({
-             option =
-               ( Dhcp_wire.Log_servers _ | Dhcp_wire.Vendor_specific _
-               | Dhcp_wire.Routers _ | Dhcp_wire.Dns_servers _ );
-             _;
-           } as dhcp_option)
+          {
+            option =
+              ( Dhcp_wire.Log_servers _ | Dhcp_wire.Vendor_specific _
+              | Dhcp_wire.Routers _ | Dhcp_wire.Dns_servers _ ) as option;
+            tags = [];
+          }
         :: r ->
-          gather
-            { acc with dhcp_options = dhcp_option.option :: acc.dhcp_options }
-            r
-      | `Dhcp_option ({ tags = []; option = _ } as dhcp_option) :: _ ->
+          gather { acc with dhcp_options = option :: acc.dhcp_options } r
+      | `Dhcp_option
+          {
+            option =
+              ( Dhcp_wire.Log_servers _ | Dhcp_wire.Vendor_specific _
+              | Dhcp_wire.Routers _ | Dhcp_wire.Dns_servers _ ) as option;
+            tags = [ tag ];
+          }
+        :: r ->
+          (* TODO: if there are multiple tags then *all* tags must be matched.
+             So to make it simpler we only consider one tag for now. *)
+          let tagged_dhcp_options =
+            (* OCaml>=5.1: use Map.add_to_list *)
+            Map.update tag
+              (function
+                | None -> Some [ option ]
+                | Some options -> Some (option :: options))
+              acc.tagged_dhcp_options
+          in
+          gather { acc with tagged_dhcp_options } r
+      | `Dhcp_option ({ option = _ } as dhcp_option) :: _ ->
           Error
             (Fmt.str "Don't know how to handle dhcp-option %a"
                Dnsvizor.Config_parser.pp_dhcp_option dhcp_option)
       | `Dhcp_host
           {
             id = None;
-            sets = [];
             tags = [];
             ipv6 = None;
             lease_time = None;
             ignore = false;
+            sets;
             domain_name = Some domain_name;
             macs;
             ipv4;
@@ -552,7 +569,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             {
               acc with
               dhcp_hosts =
-                (macs, Domain_name.to_string domain_name, ipv4)
+                (sets, macs, Domain_name.to_string domain_name, ipv4)
                 :: acc.dhcp_hosts;
             }
             r
@@ -574,6 +591,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         dhcp_hosts = [];
         dhcp_range = None;
         dhcp_options = [];
+        tagged_dhcp_options = Map.empty;
         domain = None;
         no_hosts = false;
         dnssec = false;
@@ -584,7 +602,15 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let ( let* ) = Result.bind in
     let ipv4 = K.ipv4 () in
     let ipv4_address = Ipaddr.V4.Prefix.address ipv4 in
-    let* { dhcp_hosts; dhcp_range; dhcp_options; domain; no_hosts; dnssec } =
+    let* {
+           dhcp_hosts;
+           dhcp_range;
+           dhcp_options;
+           tagged_dhcp_options;
+           domain;
+           no_hosts;
+           dnssec;
+         } =
       process_config config
     in
     let* range, default_lease_time =
@@ -631,9 +657,19 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     in
     let hosts =
       List.concat_map
-        (fun (macs, hostname, fixed_addr) ->
+        (fun (sets, macs, hostname, fixed_addr) ->
           List.map
             (fun hw_addr ->
+              let options =
+                List.fold_left
+                  (fun acc tag ->
+                    match Map.find_opt tag tagged_dhcp_options with
+                    | None -> acc
+                    | Some additional_options ->
+                        (* XXX: do we need to deduplicate?! *)
+                        additional_options @ acc)
+                  options sets
+              in
               { Dhcp_server.Config.hw_addr; hostname; fixed_addr; options })
             macs)
         dhcp_hosts
