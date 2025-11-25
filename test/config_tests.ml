@@ -304,6 +304,7 @@ let ok_domain3 () =
 let option_t =
   let equal a b =
     List.for_all2 String.equal a.tags b.tags
+    && Option.equal String.equal a.vendor b.vendor
     && String.equal
          (Dhcp_wire.dhcp_option_to_string a.option)
          (Dhcp_wire.dhcp_option_to_string b.option)
@@ -315,6 +316,7 @@ let ok_router () =
   let expected =
     {
       tags = [];
+      vendor = None;
       option = Dhcp_wire.Routers [ Ipaddr.V4.of_string_exn "192.168.4.4" ];
     }
   in
@@ -365,10 +367,15 @@ let test_configuration config file () =
 let dhcp_option_conf =
   [
     `Dhcp_option
-      { tags = []; option = Dhcp_wire.Log_servers [ Ipaddr.V4.localhost ] };
+      {
+        tags = [];
+        vendor = None;
+        option = Dhcp_wire.Log_servers [ Ipaddr.V4.localhost ];
+      };
     `Dhcp_option
       {
         tags = [ "naughties" ];
+        vendor = None;
         option = Dhcp_wire.Log_servers [ Ipaddr.V4.of_string_exn "8.8.8.8" ];
       };
   ]

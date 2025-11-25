@@ -393,20 +393,21 @@ module Net (N : Mirage_net.S) = struct
             Lwt.return_unit
         | Dhcp_server.Input.Reply (reply, lease_opt, leases) -> (
             (match lease_opt with
-            | None -> Lwt.return (Ok reply)
-            | Some (lease, opts) -> (
-                Logs.info (fun m ->
-                    m "Handing out lease %s, received options %a"
-                      (Dhcp_server.Lease.to_string lease)
-                      Fmt.(list ~sep:(any ", ") string)
-                      (List.map Dhcp_wire.dhcp_option_to_string opts));
-                t.lease_acquired lease opts >>= function
-                | Ok options ->
-                    let reply =
-                      Dhcp_wire.{ reply with options = reply.options @ options }
-                    in
-                    Lwt.return (Ok reply)
-                | Error _ as e -> Lwt.return e))
+              | None -> Lwt.return (Ok reply)
+              | Some (lease, opts) -> (
+                  Logs.info (fun m ->
+                      m "Handing out lease %s, received options %a"
+                        (Dhcp_server.Lease.to_string lease)
+                        Fmt.(list ~sep:(any ", ") string)
+                        (List.map Dhcp_wire.dhcp_option_to_string opts));
+                  t.lease_acquired lease opts >>= function
+                  | Ok options ->
+                      let reply =
+                        Dhcp_wire.
+                          { reply with options = reply.options @ options }
+                      in
+                      Lwt.return (Ok reply)
+                  | Error _ as e -> Lwt.return e))
             >>= function
             | Error () -> Lwt.return_unit
             | Ok reply -> (
@@ -479,6 +480,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
   type t = { net : Net.t; mac : Macaddr.t; mutable configuration : string }
 
+  type intermediate_config = {
+    dhcp_range : (Ipaddr.V4.t * Ipaddr.V4.t option * int option) option;
+    dhcp_options : Dhcp_wire.dhcp_option list;
+    domain : [ `raw ] Domain_name.t option;
+    no_hosts : bool;
+    dnssec : bool;
+  }
+
   let process_config configuration =
     let ( let* ) = Result.bind in
     let unique x item =
@@ -496,22 +505,23 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         :: _ ->
           Error "Unhandled dhcp-range option"
       | `Dhcp_range dhcp_range :: r ->
-          let dhcp_range', log_servers, domain, no_hosts, dnssec = acc in
           (* TODO: multiple ranges *)
           (* TODO: netmask *)
-          let* () = unique dhcp_range' "dhcp-range" in
+          let* () = unique acc.dhcp_range "dhcp-range" in
           let range =
             (dhcp_range.start_addr, dhcp_range.end_addr, dhcp_range.lease_time)
           in
-          gather (Some range, log_servers, domain, no_hosts, dnssec) r
+          gather { acc with dhcp_range = Some range } r
       | `Dhcp_option { tags = _ :: _; _ } :: _ ->
           Error "Don't know how to handle tags in --dhcp-option (yet)"
-      | `Dhcp_option ({ option = Dhcp_wire.Log_servers _; _ } as dhcp_option)
+      | `Dhcp_option { vendor = Some _; _ } :: _ ->
+          Error "Don't know how to handle vendor in --dhcp-option (yet)"
+      | `Dhcp_option
+          ({ option = Dhcp_wire.Log_servers _ | Dhcp_wire.Vendor_specific _; _ }
+           as dhcp_option)
         :: r ->
-          let dhcp_range, dhcp_option', domain, no_hosts, dnssec = acc in
-          let* () = unique dhcp_option' "dhcp-option log-server" in
           gather
-            (dhcp_range, Some dhcp_option.option, domain, no_hosts, dnssec)
+            { acc with dhcp_options = dhcp_option.option :: acc.dhcp_options }
             r
       | `Dhcp_option ({ tags = []; option = _ } as dhcp_option) :: _ ->
           Error
@@ -522,23 +532,34 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Error
             "Don't know how to handle domain with address range or interface"
       | `Domain (domain, None) :: r ->
-          let dhcp_range, log_servers, domain', no_hosts, dnssec = acc in
-          let* () = unique domain' "domain" in
-          gather (dhcp_range, log_servers, Some domain, no_hosts, dnssec) r
-      | `No_hosts :: r ->
-          let dhcp_range, dhcp_option, domain, _, dnssec = acc in
-          gather (dhcp_range, dhcp_option, domain, true, dnssec) r
-      | `Dnssec :: r ->
-          let dhcp_range, dhcp_option, domain, no_hosts, _ = acc in
-          gather (dhcp_range, dhcp_option, domain, no_hosts, true) r
+          let* () = unique acc.domain "domain" in
+          gather { acc with domain = Some domain } r
+      | `No_hosts :: r -> gather { acc with no_hosts = true } r
+      | `Dnssec :: r -> gather { acc with dnssec = true } r
     in
-    gather (None, None, None, false, false) configuration
+    gather
+      {
+        dhcp_range = None;
+        dhcp_options = [];
+        domain = None;
+        no_hosts = false;
+        dnssec = false;
+      }
+      configuration
 
   let dhcp_configuration_of mac config =
     let ( let* ) = Result.bind in
     let ipv4 = K.ipv4 () in
     let ipv4_address = Ipaddr.V4.Prefix.address ipv4 in
-    let* range, log_servers, domain, no_hosts, dnssec = process_config config in
+    let* {
+           dhcp_range = range;
+           dhcp_options = log_servers;
+           domain;
+           no_hosts;
+           dnssec;
+         } =
+      process_config config
+    in
     let* range, default_lease_time =
       match range with
       | None -> Ok (None, None)
@@ -559,10 +580,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     in
     let options =
       (match K.ipv4_gateway () with
-      | None -> []
-      | Some x -> [ Dhcp_wire.Routers [ x ] ])
+        | None -> []
+        | Some x -> [ Dhcp_wire.Routers [ x ] ])
       @ [ Dhcp_wire.Dns_servers [ ipv4_address ] ]
-      @ Option.to_list log_servers
+      @ log_servers
       @ Option.to_list
           (Option.map
              (fun domain ->
@@ -935,9 +956,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler t resolver js_file password meth
-                          request.H1.Request.target auth_password,
-                        meth ))
+                  ( web_ui_handler t resolver js_file password meth
+                      request.H1.Request.target auth_password,
+                    meth ))
               >>= function
               | Ok (Some (`Content (content, content_type)), _) ->
                   reply ?content_type reqd content
@@ -1034,9 +1055,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt.async (fun () ->
               r
               >|= Result.map (fun meth ->
-                      ( web_ui_handler t resolver js_file password meth
-                          request.H2.Request.target auth_password,
-                        meth ))
+                  ( web_ui_handler t resolver js_file password meth
+                      request.H2.Request.target auth_password,
+                    meth ))
               >|= function
               | Ok (Some (`Content (content, content_type)), _) ->
                   reply ?content_type reqd content
@@ -1476,15 +1497,15 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
            (function Dhcp_wire.Client_fqdn _ -> true | _ -> false)
            options
        with
-      | Some (Dhcp_wire.Client_fqdn (flags, name)) ->
-          if List.mem `Server_A flags && not (List.mem `No_update flags) then
-            update_dns tcp lease name >>= fun r ->
-            update_tlstunnel tcp lease name >>= fun r2 -> Lwt.return (r @ r2)
-          else Lwt.return []
-      | None ->
-          Logs.info (fun m -> m "no client FQDN requested");
-          Lwt.return []
-      | Some _ -> assert false)
+        | Some (Dhcp_wire.Client_fqdn (flags, name)) ->
+            if List.mem `Server_A flags && not (List.mem `No_update flags) then
+              update_dns tcp lease name >>= fun r ->
+              update_tlstunnel tcp lease name >>= fun r2 -> Lwt.return (r @ r2)
+            else Lwt.return []
+        | None ->
+            Logs.info (fun m -> m "no client FQDN requested");
+            Lwt.return []
+        | Some _ -> assert false)
       >>= fun options -> Lwt.return (Ok options)
   end
 
@@ -1522,15 +1543,15 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `A ->
           Dns_client.getaddrinfo dns_client Dns.Rr_map.A nam
           >|= Result.map (fun (_ttl, v4s) ->
-                  Ipaddr.V4.Set.to_seq v4s
-                  |> Seq.map (fun v4 -> Ipaddr.V4 v4)
-                  |> Ipaddr.Set.of_seq)
+              Ipaddr.V4.Set.to_seq v4s
+              |> Seq.map (fun v4 -> Ipaddr.V4 v4)
+              |> Ipaddr.Set.of_seq)
       | `AAAA ->
           Dns_client.getaddrinfo dns_client Dns.Rr_map.Aaaa nam
           >|= Result.map (fun (_ttl, v6s) ->
-                  Ipaddr.V6.Set.to_seq v6s
-                  |> Seq.map (fun v6 -> Ipaddr.V6 v6)
-                  |> Ipaddr.Set.of_seq)
+              Ipaddr.V6.Set.to_seq v6s
+              |> Seq.map (fun v6 -> Ipaddr.V6 v6)
+              |> Ipaddr.Set.of_seq)
     in
     HE.inject he getaddrinfo;
     let ctx = Mimic.add Mimic_he.happy_eyeballs he Mimic.empty in
@@ -1628,48 +1649,49 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     | Error _e -> invalid_arg "JS file could not be loaded"
     | Ok js_file ->
         (match K.dns_upstream () with
-        | None ->
-            Logs.info (fun m -> m "using a recursive resolver");
-            let module Daemon = Daemon (Resolver) in
-            let module Dhcp_dns = Dhcp_dns (Resolver) in
-            let resolver =
-              let features =
-                (if dnssec then [ `Dnssec ] else [])
-                @ (if K.qname_minimisation () then [ `Qname_minimisation ]
-                   else [])
-                @
-                if K.opportunistic_tls () then
-                  [ `Opportunistic_tls_authoritative ]
-                else []
+          | None ->
+              Logs.info (fun m -> m "using a recursive resolver");
+              let module Daemon = Daemon (Resolver) in
+              let module Dhcp_dns = Dhcp_dns (Resolver) in
+              let resolver =
+                let features =
+                  (if dnssec then [ `Dnssec ] else [])
+                  @ (if K.qname_minimisation () then [ `Qname_minimisation ]
+                     else [])
+                  @
+                  if K.opportunistic_tls () then
+                    [ `Opportunistic_tls_authoritative ]
+                  else []
+                in
+                Dns_resolver.create ?cache_size:(K.dns_cache ()) features
+                  (Mirage_mtime.elapsed_ns ())
+                  Mirage_crypto_rng.generate primary_t
               in
-              Dns_resolver.create ?cache_size:(K.dns_cache ()) features
-                (Mirage_mtime.elapsed_ns ())
-                Mirage_crypto_rng.generate primary_t
-            in
-            let resolver = Resolver.resolver stack ~root:true resolver in
-            net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
-            let t = { net; mac; configuration } in
-            Lwt.async (fun () ->
-                Daemon.start_resolver t resolver stack tcp http_client js_file
-                  password);
-            Lwt.return_unit
-        | Some ns -> (
-            Logs.info (fun m -> m "using a stub resolver, forwarding to %s" ns);
-            let module Daemon = Daemon (Stub) in
-            let module Dhcp_dns = Dhcp_dns (Stub) in
-            Stub.H.connect_device stack >>= fun happy_eyeballs ->
-            try
-              Stub.create ?cache_size:(K.dns_cache ()) ~nameservers:[ ns ]
-                primary_t ~happy_eyeballs stack
-              >>= fun resolver ->
+              let resolver = Resolver.resolver stack ~root:true resolver in
               net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
               let t = { net; mac; configuration } in
               Lwt.async (fun () ->
                   Daemon.start_resolver t resolver stack tcp http_client js_file
                     password);
               Lwt.return_unit
-            with Invalid_argument a ->
-              Logs.err (fun m -> m "error %s" a);
-              exit Mirage_runtime.argument_error))
+          | Some ns -> (
+              Logs.info (fun m ->
+                  m "using a stub resolver, forwarding to %s" ns);
+              let module Daemon = Daemon (Stub) in
+              let module Dhcp_dns = Dhcp_dns (Stub) in
+              Stub.H.connect_device stack >>= fun happy_eyeballs ->
+              try
+                Stub.create ?cache_size:(K.dns_cache ()) ~nameservers:[ ns ]
+                  primary_t ~happy_eyeballs stack
+                >>= fun resolver ->
+                net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
+                let t = { net; mac; configuration } in
+                Lwt.async (fun () ->
+                    Daemon.start_resolver t resolver stack tcp http_client
+                      js_file password);
+                Lwt.return_unit
+              with Invalid_argument a ->
+                Logs.err (fun m -> m "error %s" a);
+                exit Mirage_runtime.argument_error))
         >>= fun () -> S.listen stack
 end
