@@ -111,14 +111,17 @@ module K = struct
 
     let dhcp_host =
       let doc =
-        Arg.info ~doc:"TODO dhcp-host description."
+        Arg.info
+          ~doc:
+            "A static dhcp-host entry, containing the MAC address, hostname, \
+             and IPv4 address."
           ~docv:Config_parser.dhcp_host_docv ~docs:s_dnsmasq [ "dhcp-host" ]
       in
       Arg.(value & opt_all Config_parser.dhcp_host_c [] doc)
 
     let dhcp_option =
       let doc =
-        Arg.info ~doc:"TODO dhcp-option description."
+        Arg.info ~doc:"A dhcp option, option code (or name) and value."
           ~docv:Config_parser.dhcp_option_docv ~docs:s_dnsmasq [ "dhcp-option" ]
       in
       Arg.(value & opt_all Config_parser.dhcp_option_c [] doc)
