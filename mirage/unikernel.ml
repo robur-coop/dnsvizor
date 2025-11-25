@@ -521,8 +521,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | `Dhcp_option { vendor = Some _; _ } :: _ ->
           Error "Don't know how to handle vendor in --dhcp-option (yet)"
       | `Dhcp_option
-          ({ option = Dhcp_wire.Log_servers _ | Dhcp_wire.Vendor_specific _; _ }
-           as dhcp_option)
+          ({
+             option =
+               ( Dhcp_wire.Log_servers _ | Dhcp_wire.Vendor_specific _
+               | Dhcp_wire.Routers _ | Dhcp_wire.Dns_servers _ );
+             _;
+           } as dhcp_option)
         :: r ->
           gather
             { acc with dhcp_options = dhcp_option.option :: acc.dhcp_options }
@@ -580,18 +584,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let ( let* ) = Result.bind in
     let ipv4 = K.ipv4 () in
     let ipv4_address = Ipaddr.V4.Prefix.address ipv4 in
-    let* {
-           dhcp_hosts;
-           dhcp_range = range;
-           dhcp_options = log_servers;
-           domain;
-           no_hosts;
-           dnssec;
-         } =
+    let* { dhcp_hosts; dhcp_range; dhcp_options; domain; no_hosts; dnssec } =
       process_config config
     in
     let* range, default_lease_time =
-      match range with
+      match dhcp_range with
       | None -> Ok (None, None)
       | Some (start, None, lease_time) ->
           if Ipaddr.V4.Prefix.mem start ipv4 then
@@ -608,12 +605,24 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               (Fmt.str "Don't know what to do with dhcp-range %a,%a"
                  Ipaddr.V4.pp start Ipaddr.V4.pp stop)
     in
+    let router =
+      Option.to_list
+        (Option.map (fun x -> Dhcp_wire.Routers [ x ]) (K.ipv4_gateway ()))
+    and dns_server = [ Dhcp_wire.Dns_servers [ ipv4_address ] ] in
     let options =
-      (match K.ipv4_gateway () with
-        | None -> []
-        | Some x -> [ Dhcp_wire.Routers [ x ] ])
-      @ [ Dhcp_wire.Dns_servers [ ipv4_address ] ]
-      @ log_servers
+      (if
+         List.exists
+           (function Dhcp_wire.Routers _ -> true | _ -> false)
+           dhcp_options
+       then []
+       else router)
+      @ (if
+           List.exists
+             (function Dhcp_wire.Dns_servers _ -> true | _ -> false)
+             dhcp_options
+         then []
+         else dns_server)
+      @ dhcp_options
       @ Option.to_list
           (Option.map
              (fun domain ->
@@ -631,8 +640,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     in
     let max_lease_time = Option.map (fun lt -> lt * 2) default_lease_time in
     let dhcp_config =
-      Dhcp_server.Config.make ?hostname:None ?default_lease_time
-        ?max_lease_time ~hosts ~addr_tuple:(ipv4_address, mac)
+      Dhcp_server.Config.make ?hostname:None ?default_lease_time ?max_lease_time
+        ~hosts ~addr_tuple:(ipv4_address, mac)
         ~network:(Ipaddr.V4.Prefix.prefix ipv4)
         ~range ~options ()
     in

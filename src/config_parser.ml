@@ -427,6 +427,7 @@ let dhcp_opt_code =
   in
   let log_server = string "log-server" *> return Dhcp_wire.LOG_SERVERS in
   let router = string "router" *> return Dhcp_wire.ROUTERS in
+  let dns_server = string "dns-server" *> return Dhcp_wire.DNS_SERVERS in
   let vendor_specific =
     string "vendor-encap" *> return Dhcp_wire.VENDOR_SPECIFIC
   in
@@ -434,7 +435,7 @@ let dhcp_opt_code =
     [
       integer_opt;
       string "option:" *> commit
-      *> choice [ log_server; router; vendor_specific ];
+      *> choice [ log_server; router; dns_server; vendor_specific ];
     ]
 
 let dhcp_opt =
@@ -445,6 +446,9 @@ let dhcp_opt =
   | Dhcp_wire.ROUTERS ->
       sep_by1 (char ',') ipv4_dotted <?> "router ips" >>= fun servers ->
       return (Dhcp_wire.Routers servers)
+  | Dhcp_wire.DNS_SERVERS ->
+      sep_by1 (char ',') ipv4_dotted <?> "dns-server ips" >>= fun servers ->
+      return (Dhcp_wire.Dns_servers servers)
   | Dhcp_wire.VENDOR_SPECIFIC ->
       dnsmasq_hex ~accept_non_hex:true >>= fun vendor_specific ->
       return (Dhcp_wire.Vendor_specific vendor_specific)
@@ -469,9 +473,11 @@ let pp_dhcp_opt ppf = function
       Fmt.pf ppf "option:router,%a"
         Fmt.(list ~sep:(any ",") Ipaddr.V4.pp)
         servers
-  | _ ->
-      (* TODO should print <ID>,<VAL> - but there's no dhcp_option_to_option_code in dhcp_wire *)
-      assert false
+  | Dhcp_wire.Dns_servers servers ->
+      Fmt.pf ppf "option:dns-server,%a"
+        Fmt.(list ~sep:(any ",") Ipaddr.V4.pp)
+        servers
+  | x -> Fmt.pf ppf "option:%s" (Dhcp_wire.dhcp_option_to_string x)
 
 let pp_dhcp_option ppf { tags; vendor; option } =
   Fmt.pf ppf "%a%a%a"
