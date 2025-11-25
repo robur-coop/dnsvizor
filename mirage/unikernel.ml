@@ -481,6 +481,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   type t = { net : Net.t; mac : Macaddr.t; mutable configuration : string }
 
   type intermediate_config = {
+    dhcp_hosts : (Macaddr.t list * string * Ipaddr.V4.t option) list;
     dhcp_range : (Ipaddr.V4.t * Ipaddr.V4.t option * int option) option;
     dhcp_options : Dhcp_wire.dhcp_option list;
     domain : [ `raw ] Domain_name.t option;
@@ -527,7 +528,31 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Error
             (Fmt.str "Don't know how to handle dhcp-option %a"
                Dnsvizor.Config_parser.pp_dhcp_option dhcp_option)
-      | `Dhcp_host _ :: _ -> Error "Don't know how to handle dhcp-host (yet)"
+      | `Dhcp_host
+          {
+            id = None;
+            sets = [];
+            tags = [];
+            ipv6 = None;
+            lease_time = None;
+            ignore = false;
+            domain_name = Some domain_name;
+            macs;
+            ipv4;
+          }
+        :: r ->
+          gather
+            {
+              acc with
+              dhcp_hosts =
+                (macs, Domain_name.to_string domain_name, ipv4)
+                :: acc.dhcp_hosts;
+            }
+            r
+      | `Dhcp_host h :: _ ->
+          Error
+            (Fmt.str "Don't know how to handle dhcp-host with these options: %a"
+               Dnsvizor.Config_parser.pp_dhcp_host h)
       | `Domain (_, Some _) :: _ ->
           Error
             "Don't know how to handle domain with address range or interface"
@@ -539,6 +564,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     in
     gather
       {
+        dhcp_hosts = [];
         dhcp_range = None;
         dhcp_options = [];
         domain = None;
@@ -552,6 +578,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let ipv4 = K.ipv4 () in
     let ipv4_address = Ipaddr.V4.Prefix.address ipv4 in
     let* {
+           dhcp_hosts;
            dhcp_range = range;
            dhcp_options = log_servers;
            domain;
@@ -590,10 +617,19 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                Dhcp_wire.Domain_name (Domain_name.to_string domain))
              domain)
     in
+    let hosts =
+      List.concat_map
+        (fun (macs, hostname, fixed_addr) ->
+          List.map
+            (fun hw_addr ->
+              { Dhcp_server.Config.hw_addr; hostname; fixed_addr; options })
+            macs)
+        dhcp_hosts
+    in
     (* TODO: what should be the max_lease_time? 2 * default_lease_time *)
     let dhcp_config =
       Dhcp_server.Config.make ?hostname:None ?default_lease_time
-        ?max_lease_time:None ?hosts:None ~addr_tuple:(ipv4_address, mac)
+        ?max_lease_time:None ~hosts ~addr_tuple:(ipv4_address, mac)
         ~network:(Ipaddr.V4.Prefix.prefix ipv4)
         ~range ~options ()
     in
