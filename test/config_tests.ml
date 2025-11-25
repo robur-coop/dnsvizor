@@ -380,6 +380,54 @@ let dhcp_option_conf =
       };
   ]
 
+let small_carpie_conf =
+  [
+    `Dhcp_range
+      {
+        start_addr = Ipaddr.V4.of_string_exn "192.168.0.10";
+        end_addr = None;
+        mode = Some `Static;
+        netmask = None;
+        broadcast = None;
+        lease_time = Some (48 * 60 * 60);
+      };
+    `Dhcp_option
+      {
+        tags = [];
+        vendor = None;
+        option = Dhcp_wire.Routers [ Ipaddr.V4.of_string_exn "192.168.0.1" ];
+      };
+    `Dhcp_host
+      (make_dhcp_host
+         ~macs:[ Macaddr.of_string_exn "00:00:5e:00:53:42" ]
+         ~domain_name:(Domain_name.of_string_exn "thedoctor")
+         ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.10")
+         ());
+    `Dhcp_host
+      (make_dhcp_host
+         ~macs:
+           Macaddr.
+             [
+               of_string_exn "00:00:5e:00:53:01";
+               of_string_exn "00:00:5e:00:53:02";
+             ]
+         ~domain_name:(Domain_name.of_string_exn "tardis")
+         ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.22")
+         ());
+    `Dhcp_host
+      (make_dhcp_host
+         ~macs:[ Macaddr.of_string_exn "00:00:5e:00:53:08" ]
+         ~domain_name:(Domain_name.of_string_exn "sonicscrewdriver")
+         ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.23")
+         ());
+    `Dhcp_host
+      (make_dhcp_host
+         ~macs:[ Macaddr.of_string_exn "00:00:5e:00:53:10" ]
+         ~domain_name:(Domain_name.of_string_exn "satellite5")
+         ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.32")
+         ());
+  ]
+
 let config_file_tests =
   [
     ("First example", `Quick, test_configuration [] "simple.conf");
@@ -389,6 +437,9 @@ let config_file_tests =
     ( "dhcp-option",
       `Quick,
       test_configuration dhcp_option_conf "dhcp-option.conf" );
+    ( "smaller carpie.net configuration",
+      `Quick,
+      test_configuration small_carpie_conf "smaller-carpie.conf" );
   ]
 
 let tests =

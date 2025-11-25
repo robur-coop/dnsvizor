@@ -597,6 +597,8 @@ let parse_file data =
          [
            ( directive_prefix "dhcp-range" *> dhcp_range conf_end_of_directive
            >>| fun range -> `Dhcp_range range );
+           ( directive_prefix "dhcp-host" *> dhcp_host conf_end_of_directive
+           >>| fun host -> `Dhcp_host host );
            (flag "dnssec" >>| fun _ -> `Dnssec);
            ( directive_prefix "domain" *> domain conf_end_of_directive
            >>| fun domain -> `Domain domain );
