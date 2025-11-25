@@ -629,10 +629,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             macs)
         dhcp_hosts
     in
-    (* TODO: what should be the max_lease_time? 2 * default_lease_time *)
+    let max_lease_time = Option.map (fun lt -> lt * 2) default_lease_time in
     let dhcp_config =
       Dhcp_server.Config.make ?hostname:None ?default_lease_time
-        ?max_lease_time:None ~hosts ~addr_tuple:(ipv4_address, mac)
+        ?max_lease_time ~hosts ~addr_tuple:(ipv4_address, mac)
         ~network:(Ipaddr.V4.Prefix.prefix ipv4)
         ~range ~options ()
     in
