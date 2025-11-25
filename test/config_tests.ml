@@ -367,7 +367,11 @@ let test_configuration config file () =
 let dhcp_option_conf =
   [
     `Dhcp_option
-      { tags = []; vendor = None; option = Dhcp_wire.Log_servers [ Ipaddr.V4.localhost ] };
+      {
+        tags = [];
+        vendor = None;
+        option = Dhcp_wire.Log_servers [ Ipaddr.V4.localhost ];
+      };
     `Dhcp_option
       {
         tags = [ "naughties" ];

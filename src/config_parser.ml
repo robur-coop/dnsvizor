@@ -244,24 +244,20 @@ let tag_thing = string "tag:" *> commit *> until_comma
 let dnsmasq_hex ~accept_non_hex:or_id =
   (* FIXME: probably be more precise in accepted characters *)
   scan false (fun is_hex -> function
-        | ',' -> None
-        | ':' -> Some true
-        | _ -> Some is_hex)
-    <* commit
-    >>= fun (hex_colon_seperated, is_hex) ->
-    if is_hex then
-      (* This is not very smart *)
-      let hex =
-        String.concat "" (String.split_on_char ':' hex_colon_seperated)
-      in
-      match Ohex.decode hex with
-      | data -> return data
-      | exception Invalid_argument e ->
+    | ',' -> None
+    | ':' -> Some true
+    | _ -> Some is_hex)
+  <* commit
+  >>= fun (hex_colon_seperated, is_hex) ->
+  if is_hex then
+    (* This is not very smart *)
+    let hex = String.concat "" (String.split_on_char ':' hex_colon_seperated) in
+    match Ohex.decode hex with
+    | data -> return data
+    | exception Invalid_argument e ->
         fail (Fmt.str "bad hex constant: %s: %S" e hex_colon_seperated)
-    else if or_id then
-      return hex_colon_seperated
-    else
-      fail (Fmt.str "bad hex constant: %S" hex_colon_seperated)
+  else if or_id then return hex_colon_seperated
+  else fail (Fmt.str "bad hex constant: %S" hex_colon_seperated)
 
 let dhcp_host end_of_directive =
   let lease_time = lease_time >>| fun lease -> `Lease_time lease in
@@ -270,8 +266,7 @@ let dhcp_host end_of_directive =
     *> choice ~failure_msg:"Bad id thing"
          [
            char '*' *> return `Any_client_id;
-           dnsmasq_hex ~accept_non_hex:true >>| fun name ->
-           `Client_id name;
+           (dnsmasq_hex ~accept_non_hex:true >>| fun name -> `Client_id name);
          ]
   in
   let net_set_thing =
@@ -415,7 +410,11 @@ let address_range =
   <|> ( string "/" *> int >>= fun prefix ->
         return (`Ip (Ipaddr.V4.Prefix.make prefix start)) )
 
-type dhcp_option = { tags : string list; vendor : string option; option : Dhcp_wire.dhcp_option }
+type dhcp_option = {
+  tags : string list;
+  vendor : string option;
+  option : Dhcp_wire.dhcp_option;
+}
 
 let dhcp_opt_code =
   let integer_opt =
@@ -428,14 +427,14 @@ let dhcp_opt_code =
   in
   let log_server = string "log-server" *> return Dhcp_wire.LOG_SERVERS in
   let router = string "router" *> return Dhcp_wire.ROUTERS in
-  let vendor_specific = string "vendor-encap" *> return Dhcp_wire.VENDOR_SPECIFIC in
+  let vendor_specific =
+    string "vendor-encap" *> return Dhcp_wire.VENDOR_SPECIFIC
+  in
   choice ~failure_msg:"option:"
-    [ integer_opt;
-      string "option:" *> commit *> choice [
-        log_server;
-        router;
-        vendor_specific;
-      ]
+    [
+      integer_opt;
+      string "option:" *> commit
+      *> choice [ log_server; router; vendor_specific ];
     ]
 
 let dhcp_opt =
@@ -453,15 +452,13 @@ let dhcp_opt =
       Format.kasprintf fail "Unsupported dhcp option %s"
         (Dhcp_wire.option_code_to_string code)
 
-let dhcp_vendor =
-  string "vendor:" *> commit *> dnsmasq_hex ~accept_non_hex:true
+let dhcp_vendor = string "vendor:" *> commit *> dnsmasq_hex ~accept_non_hex:true
 
 let dhcp_option end_of_directive =
   (* [tag:<tag>,[tag:<tag>,]][encap:<opt>,][vi-encap:<enterprise>,][vendor:[<vendor-class>],][<opt>|option:<opt-name>|option6:<opt>|option6:<opt-name>],[<value>[,<value>]] *)
   many (tag_thing <* char ',') >>= fun tags ->
-  option None ((dhcp_vendor >>| Option.some) <* char ',') >>= fun vendor ->
-  dhcp_opt <* end_of_directive >>| fun option ->
-  { option; vendor; tags }
+  option None (dhcp_vendor >>| Option.some <* char ',') >>= fun vendor ->
+  dhcp_opt <* end_of_directive >>| fun option -> { option; vendor; tags }
 
 let pp_dhcp_opt ppf = function
   | Dhcp_wire.Log_servers log_servers ->
@@ -478,9 +475,10 @@ let pp_dhcp_opt ppf = function
 
 let pp_dhcp_option ppf { tags; vendor; option } =
   Fmt.pf ppf "%a%a%a"
-    Fmt.(list ~sep:nop (string ++ any ",")) tags
-    Fmt.(option (any "vendor:" ++ string ++ any ",")) vendor
-    pp_dhcp_opt option
+    Fmt.(list ~sep:nop (string ++ any ","))
+    tags
+    Fmt.(option (any "vendor:" ++ string ++ any ","))
+    vendor pp_dhcp_opt option
 
 let pp_address_range ppf = function
   | `Ip_range (a, b) -> Fmt.pf ppf "%a,%a" Ipaddr.V4.pp a Ipaddr.V4.pp b
