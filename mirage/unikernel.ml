@@ -548,6 +548,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               acc.tagged_dhcp_options
           in
           gather { acc with tagged_dhcp_options } r
+      | `Dhcp_option ({ tags = _a::_b::_ } as dhcp_option) :: _ ->
+                Error
+            (Fmt.str "Don't know how to handle dhcp-option with multiple tags %a"
+               Dnsvizor.Config_parser.pp_dhcp_option dhcp_option)
       | `Dhcp_option ({ option = _ } as dhcp_option) :: _ ->
           Error
             (Fmt.str "Don't know how to handle dhcp-option %a"
