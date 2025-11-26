@@ -1696,6 +1696,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     ASSETS.get assets (Mirage_kv.Key.v "main.js") >>= function
     | Error _e -> invalid_arg "JS file could not be loaded"
     | Ok js_file ->
+        let qname_min = K.qname_minimisation ()
+        and opportunistic = K.opportunistic_tls () in
         (match K.dns_upstream () with
           | None ->
               Logs.info (fun m -> m "using a recursive resolver");
@@ -1704,11 +1706,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let resolver =
                 let features =
                   (if dnssec then [ `Dnssec ] else [])
-                  @ (if K.qname_minimisation () then [ `Qname_minimisation ]
-                     else [])
+                  @ (if qname_min then [ `Qname_minimisation ] else [])
                   @
-                  if K.opportunistic_tls () then
-                    [ `Opportunistic_tls_authoritative ]
+                  if opportunistic then [ `Opportunistic_tls_authoritative ]
                   else []
                 in
                 Dns_resolver.create ?cache_size:(K.dns_cache ()) features
@@ -1725,6 +1725,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           | Some ns -> (
               Logs.info (fun m ->
                   m "using a stub resolver, forwarding to %s" ns);
+              if dnssec then
+                Logs.warn (fun m -> m "ignoring DNSSec, using a stub resolver");
+              if qname_min then
+                Logs.warn (fun m ->
+                    m "ignoring qname minimisation, using a stub resolver");
+              if opportunistic then
+                Logs.warn (fun m ->
+                    m "ignoring opportunistic TLS, using a stub resolver");
               let module Daemon = Daemon (Stub) in
               let module Dhcp_dns = Dhcp_dns (Stub) in
               Stub.H.connect_device stack >>= fun happy_eyeballs ->
