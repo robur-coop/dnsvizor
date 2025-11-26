@@ -133,6 +133,23 @@ module K = struct
       in
       Arg.(value & opt (some Config_parser.domain_c) None doc)
 
+    let no_hosts =
+      let doc =
+        Arg.info
+          ~doc:
+            "Don't 'read' the (synthesized) /etc/hosts (contains only --name \
+             argument)"
+          [ "no-hosts" ]
+      in
+      Arg.(value & flag doc)
+
+    let dnssec =
+      let doc =
+        Arg.info ~doc:"Validate DNS replies and cache DNSSEC data."
+          ~docs:s_dnsmasq [ "dnssec" ]
+      in
+      Arg.(value & flag doc)
+
     (* various ignored DNSmasq configuration options *)
     let interface =
       let doc =
@@ -172,21 +189,13 @@ module K = struct
       in
       Arg.(value & flag doc)
 
-    (* Further configuration options, not ignored *)
-    let no_hosts =
+    let dhcp_authoritative =
       let doc =
-        Arg.info
+        Arg.info ~docs:Manpage.s_none
           ~doc:
-            "Don't 'read' the (synthesized) /etc/hosts (contains only --name \
-             argument)"
-          [ "no-hosts" ]
-      in
-      Arg.(value & flag doc)
-
-    let dnssec =
-      let doc =
-        Arg.info ~doc:"Validate DNS replies and cache DNSSEC data."
-          ~docs:s_dnsmasq [ "dnssec" ]
+            "Should be set when DNSvizor is definitively the only DHCP server \
+             on a network. Assumed by charrua, our DHCP server implementation."
+          [ "dhcp-authoritative" ]
       in
       Arg.(value & flag doc)
   end
@@ -201,13 +210,14 @@ module K = struct
     and+ dhcp_host = dhcp_host
     and+ dhcp_option = dhcp_option
     and+ domain = domain
+    and+ no_hosts = no_hosts
+    and+ dnssec = dnssec
     and+ _ = interface
     and+ _ = except_interface
     and+ _ = listen_address
     and+ _ = no_dhcp_interface
     and+ _ = bind_interfaces
-    and+ no_hosts = no_hosts
-    and+ dnssec = dnssec in
+    and+ _ = dhcp_authoritative in
     Option.map (fun x -> `Dhcp_range x) dhcp_range
     @? Option.map (fun x -> `Domain x) domain
     @? (if no_hosts then Some `No_hosts else None)

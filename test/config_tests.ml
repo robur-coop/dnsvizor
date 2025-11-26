@@ -428,6 +428,31 @@ let small_carpie_conf =
          ());
   ]
 
+let netbeez_conf =
+  [
+    `Dhcp_range
+      {
+        start_addr = Ipaddr.V4.of_string_exn "172.31.0.220";
+        end_addr = Some (Ipaddr.V4.of_string_exn "172.31.0.250");
+        mode = None;
+        netmask = Some (Ipaddr.V4.of_string_exn "255.255.255.0");
+        broadcast = None;
+        lease_time = Some (12 * 60 * 60);
+      };
+    `Dhcp_option
+      {
+        tags = [];
+        vendor = None;
+        option = Dhcp_wire.Routers [ Ipaddr.V4.of_string_exn "172.31.0.1" ];
+      };
+    `Dhcp_option
+      {
+        tags = [];
+        vendor = None;
+        option = Dhcp_wire.Dns_servers [ Ipaddr.V4.of_string_exn "1.1.1.1" ];
+      };
+  ]
+
 let config_file_tests =
   [
     ("First example", `Quick, test_configuration [] "simple.conf");
@@ -440,6 +465,9 @@ let config_file_tests =
     ( "smaller carpie.net configuration",
       `Quick,
       test_configuration small_carpie_conf "smaller-carpie.conf" );
+    ( "netbeez configuration",
+      `Quick,
+      test_configuration netbeez_conf "netbeez.conf" );
   ]
 
 let tests =
