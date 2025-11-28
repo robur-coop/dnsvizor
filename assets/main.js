@@ -44,7 +44,7 @@ function startEventSource() {
 	queryStreamEvent.onmessage = ({ data }) => {
 		try {
 		    const payload = JSON.parse(data);
-                    let row = query_logs.insertRow(-1);
+                    let row = query_logs.insertRow(1);
                     let c1 = row.insertCell(0);
                     c1.innerText = `${payload.fin}`;
                     let c2 = row.insertCell(1);
