@@ -36,6 +36,7 @@ let dnsvizor =
       package "http-mirage-client";
       package "angstrom";
       package "multipart_form";
+      package "yojson";
     ]
   in
   main ~local_libs ~packages "Unikernel.Main" (network @-> kv_ro @-> job)

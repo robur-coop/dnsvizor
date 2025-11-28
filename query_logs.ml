@@ -65,6 +65,7 @@ let query_page =
                     table
                       ~a:
                         [
+                          a_id "query-logs";
                           a_class
                             [ "w-full table-auto border-collapse text-sm" ];
                         ]
@@ -89,8 +90,9 @@ let query_page =
                                     "Type";
                                     "Domain";
                                     "Client";
+                                    "Return code";
+                                    "Time taken";
                                     "Status";
-                                    "Reply";
                                     "Action";
                                   ]);
                            ])
@@ -111,8 +113,13 @@ let query_page =
                             td ~a:[ a_class [ "p-2" ] ] [ txt "192.168.1.131" ];
                             td
                               ~a:[ a_class [ "p-2 text-green-800" ] ]
-                              [ txt "OK (forwarded)" ];
-                            td ~a:[ a_class [ "p-2" ] ] [ txt "CNAME (25.0ms)" ];
+                              [ txt "NoError" ];
+                            td
+                              ~a:[ a_class [ "p-2 text-green-800" ] ]
+                              [ txt "25ms" ];
+                            td
+                              ~a:[ a_class [ "p-2 text-green-800" ] ]
+                              [ txt "OK" ];
                             td
                               ~a:[ a_class [ "p-2" ] ]
                               [
