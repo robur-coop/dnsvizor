@@ -150,6 +150,16 @@ module K = struct
       in
       Arg.(value & flag doc)
 
+    let domain_needed=
+      let doc =
+        Arg.info ~doc:"Never forward A or AAAA queries for plain names, \
+                       without dots or domain parts, to upstream nameservers. \
+                       If the name is not known from /etc/hosts or DHCP then a \
+                       \"not found\" answer is returned."
+          ~docs:s_dnsmasq [ "domain-needed" ]
+      in
+      Arg.(value & flag doc)
+
     (* various ignored DNSmasq configuration options *)
     let interface =
       let doc =
@@ -212,6 +222,7 @@ module K = struct
     and+ domain = domain
     and+ no_hosts = no_hosts
     and+ dnssec = dnssec
+    and+ domain_needed = domain_needed
     and+ _ = interface
     and+ _ = except_interface
     and+ _ = listen_address
@@ -222,6 +233,7 @@ module K = struct
     @? Option.map (fun x -> `Domain x) domain
     @? (if no_hosts then Some `No_hosts else None)
     @? (if dnssec then Some `Dnssec else None)
+    @? (if domain_needed then Some `Domain_needed else None)
     @? List.map (fun x -> `Dhcp_option x) dhcp_option
     @ List.map (fun x -> `Dhcp_host x) dhcp_host
 
@@ -502,6 +514,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     domain : [ `raw ] Domain_name.t option;
     no_hosts : bool;
     dnssec : bool;
+    domain_needed : bool;
   }
 
   let process_config configuration =
@@ -600,6 +613,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           gather { acc with domain = Some domain } r
       | `No_hosts :: r -> gather { acc with no_hosts = true } r
       | `Dnssec :: r -> gather { acc with dnssec = true } r
+      | `Domain_needed :: r -> gather { acc with domain_needed = true } r
     in
     gather
       {
@@ -610,6 +624,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         domain = None;
         no_hosts = false;
         dnssec = false;
+        domain_needed = false;
       }
       configuration
 
@@ -625,6 +640,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
            domain;
            no_hosts;
            dnssec;
+           domain_needed;
          } =
       process_config config
     in
@@ -696,29 +712,29 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         ~network:(Ipaddr.V4.Prefix.prefix ipv4)
         ~range ~options ()
     in
-    Ok (dhcp_config, domain, no_hosts, dnssec)
+    Ok (dhcp_config, domain, no_hosts, dnssec, domain_needed)
 
   let of_commandline mac () =
     let ( let+ ) x f = Result.map f x in
     let configuration = K.dnsmasq () in
-    let+ dhcp_configuration, domain, no_hosts, dnssec =
+    let+ dhcp_configuration, domain, no_hosts, dnssec, domain_needed =
       dhcp_configuration_of mac configuration
     in
     let config =
       Fmt.to_to_string (Dnsvizor.Config_parser.pp_config `File) configuration
     in
-    (config, dhcp_configuration, domain, no_hosts, dnssec)
+    (config, dhcp_configuration, domain, no_hosts, dnssec, domain_needed)
 
   let update_configuration t config
       (parsed_config : Dnsvizor.Config_parser.config) =
     let ( let+ ) x f = Result.map f x in
-    let+ dhcp_configuration, domain, no_hosts, dnssec =
+    let+ dhcp_configuration, domain, no_hosts, dnssec, domain_needed =
       Result.map_error (fun s -> `Msg s)
       @@ dhcp_configuration_of t.mac parsed_config
     in
     t.configuration <- config;
     t.net.config <- Some dhcp_configuration;
-    (domain, no_hosts, dnssec)
+    (domain, no_hosts, dnssec, domain_needed)
 
   let lookup_src_by_name name =
     List.find_opt (fun src -> Metrics.Src.name src = name) (Metrics.Src.list ())
@@ -928,8 +944,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     (Dnsvizor.Config_parser.parse_file config_data)
                     (update_configuration t config_data)
                 with
-                | Ok (_domain, _no_hosts, _dnssec) ->
-                    (* TODO: handle domain, no_hosts, dnssec *)
+                | Ok (_domain, _no_hosts, _dnssec, _domain_needed) ->
+                    (* TODO: handle domain, no_hosts, dnssec, domain_needed *)
                     Logs.info (fun m -> m "Dnsmasq config parsed correctly");
                     Some (`Redirect ("/configuration", None))
                 | Error (`Msg err) ->
@@ -1610,7 +1626,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
   let start net assets =
     let mac = N.mac net in
-    let configuration, dhcp_config, domain, no_hosts, dnssec =
+    let configuration, dhcp_config, domain, no_hosts, dnssec, require_domain =
       match of_commandline mac () with
       | Ok r -> r
       | Error e ->
@@ -1752,6 +1768,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         (match K.dns_upstream () with
           | None ->
               Logs.info (fun m -> m "using a recursive resolver");
+              Logs.warn (fun m ->
+                  if require_domain then
+                    m "ignoring domain-needed, using a recursive resolver");
               let module Daemon = Daemon (Resolver) in
               let module Dhcp_dns = Dhcp_dns (Resolver) in
               let resolver =
@@ -1763,6 +1782,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   else []
                 in
                 Dns_resolver.create ?cache_size:(K.dns_cache ()) features
+                  (Mirage_ptime.now ())
                   (Mirage_mtime.elapsed_ns ())
                   Mirage_crypto_rng.generate primary_t
               in
@@ -1788,7 +1808,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let module Dhcp_dns = Dhcp_dns (Stub) in
               Stub.H.connect_device stack >>= fun happy_eyeballs ->
               try
-                Stub.create ?cache_size:(K.dns_cache ()) ~nameservers:[ ns ]
+                Stub.create ~require_domain ?cache_size:(K.dns_cache ()) ~nameservers:[ ns ]
                   primary_t ~happy_eyeballs stack
                 >>= fun resolver ->
                 net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
