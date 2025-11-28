@@ -468,6 +468,9 @@ let config_file_tests =
     ( "netbeez configuration",
       `Quick,
       test_configuration netbeez_conf "netbeez.conf" );
+    ( "domain-needed configuration",
+      `Quick,
+      test_configuration [ `Domain_needed ] "domain-needed.conf" );
   ]
 
 let tests =
