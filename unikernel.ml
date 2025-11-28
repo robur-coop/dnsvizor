@@ -150,12 +150,13 @@ module K = struct
       in
       Arg.(value & flag doc)
 
-    let domain_needed=
+    let domain_needed =
       let doc =
-        Arg.info ~doc:"Never forward A or AAAA queries for plain names, \
-                       without dots or domain parts, to upstream nameservers. \
-                       If the name is not known from /etc/hosts or DHCP then a \
-                       \"not found\" answer is returned."
+        Arg.info
+          ~doc:
+            "Never forward A or AAAA queries for plain names, without dots or \
+             domain parts, to upstream nameservers. If the name is not known \
+             from /etc/hosts or DHCP then a \"not found\" answer is returned."
           ~docs:s_dnsmasq [ "domain-needed" ]
       in
       Arg.(value & flag doc)
@@ -1808,8 +1809,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let module Dhcp_dns = Dhcp_dns (Stub) in
               Stub.H.connect_device stack >>= fun happy_eyeballs ->
               try
-                Stub.create ~require_domain ?cache_size:(K.dns_cache ()) ~nameservers:[ ns ]
-                  primary_t ~happy_eyeballs stack
+                Stub.create ~require_domain ?cache_size:(K.dns_cache ())
+                  ~nameservers:[ ns ] primary_t ~happy_eyeballs stack
                 >>= fun resolver ->
                 net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
                 let t = { net; mac; configuration } in

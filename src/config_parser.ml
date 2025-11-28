@@ -560,7 +560,7 @@ type config_item =
   | `Dhcp_option of dhcp_option
   | `No_hosts
   | `Dnssec
-  | `Domain_needed]
+  | `Domain_needed ]
 
 type config = [ config_item | `Ignored ] list
 
