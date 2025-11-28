@@ -1763,6 +1763,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   else []
                 in
                 Dns_resolver.create ?cache_size:(K.dns_cache ()) features
+                  (Mirage_ptime.now ())
                   (Mirage_mtime.elapsed_ns ())
                   Mirage_crypto_rng.generate primary_t
               in
