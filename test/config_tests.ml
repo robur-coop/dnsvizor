@@ -380,8 +380,9 @@ let dhcp_option_conf =
       };
   ]
 
-let small_carpie_conf =
+let carpie_conf =
   [
+    `Bogus_priv;
     `Dhcp_range
       {
         start_addr = Ipaddr.V4.of_string_exn "192.168.0.10";
@@ -462,9 +463,9 @@ let config_file_tests =
     ( "dhcp-option",
       `Quick,
       test_configuration dhcp_option_conf "dhcp-option.conf" );
-    ( "smaller carpie.net configuration",
+    ( "carpie.net configuration",
       `Quick,
-      test_configuration small_carpie_conf "smaller-carpie.conf" );
+      test_configuration carpie_conf "carpie.conf" );
     ( "netbeez configuration",
       `Quick,
       test_configuration netbeez_conf "netbeez.conf" );

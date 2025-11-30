@@ -61,6 +61,7 @@ type config =
   | `Dhcp_option of dhcp_option
   | `No_hosts
   | `Dnssec
+  | `Bogus_priv
   | `Ignored ]
   list
 
