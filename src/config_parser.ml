@@ -559,7 +559,8 @@ type config_item =
   | `Domain of domain
   | `Dhcp_option of dhcp_option
   | `No_hosts
-  | `Dnssec ]
+  | `Dnssec
+  | `Bogus_priv ]
 
 type config = [ config_item | `Ignored ] list
 
@@ -575,6 +576,7 @@ let pp_config_item mode ppf item =
       Fmt.pf ppf "dhcp-option=%a" pp_dhcp_option dhcp_option
   | `No_hosts -> Fmt.string ppf "no-hosts"
   | `Dnssec -> Fmt.string ppf "dnssec"
+  | `Bogus_priv -> Fmt.string ppf "bogus-priv"
 
 let pp_config mode ppf config =
   let sep = match mode with `File -> Fmt.any "\n" | `Arg -> Fmt.any " " in
@@ -610,6 +612,7 @@ let parse_file data =
            >>| fun domain -> `Domain domain );
            ( directive_prefix "dhcp-option" *> dhcp_option conf_end_of_directive
            >>| fun dhcp_option -> `Dhcp_option dhcp_option );
+           (flag "bogus-priv" >>| fun _ -> `Bogus_priv);
            ignore_directive "interface";
            ignore_directive "except-interface";
            ignore_directive "listen-address";
