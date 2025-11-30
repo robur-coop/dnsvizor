@@ -618,7 +618,8 @@ let parse_file data =
            ignore_directive "listen-address";
            ignore_directive "no-dhcp-interface";
            ignore_flag "bind-interfaces";
-           ignore_flag "dhcp-authoritative"
+           ignore_flag "dhcp-authoritative";
+           ignore_flag "domain-needed"
            (* charrua assumes to be the authoritative anyways *);
            ( string "#" *> commit *> ignore_line "#" <?> "comment" >>| fun _ ->
              `Ignored );

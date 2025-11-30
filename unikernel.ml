@@ -210,6 +210,17 @@ module K = struct
           [ "dhcp-authoritative" ]
       in
       Arg.(value & flag doc)
+
+    let domain_needed =
+      let doc =
+        Arg.info ~docs:Manpage.s_none
+          ~doc:
+            "Never forward A or AAAA queries for plain names, without dots or \
+             domain parts, to upstream nameservers. If the name is not known \
+             from /etc/hosts or DHCP then a \"not found\" answer is returned."
+          [ "domain-needed" ]
+      in
+      Arg.(value & flag doc)
   end
 
   let dnsmasq : unit -> Config_parser.config =
@@ -230,7 +241,8 @@ module K = struct
     and+ _ = listen_address
     and+ _ = no_dhcp_interface
     and+ _ = bind_interfaces
-    and+ _ = dhcp_authoritative in
+    and+ _ = dhcp_authoritative
+    and+ _ = domain_needed in
     Option.map (fun x -> `Dhcp_range x) dhcp_range
     @? Option.map (fun x -> `Domain x) domain
     @? (if no_hosts then Some `No_hosts else None)
