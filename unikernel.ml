@@ -827,17 +827,15 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         | Some qtyp -> Fmt.to_to_string Dns.Packet.Question.pp_qtype qtyp
         | None -> "NONE"
       in
-      `Assoc
-        [
-          ("fin", `String (Ptime.to_rfc3339 ~tz_offset_s:0 fin));
-          ("typ", `String qtyp);
-          ("domain", `String (Domain_name.to_string (fst question)));
-          ("client", `String (Ipaddr.to_string src));
-          ("rcode", `String (Dns.Rcode.to_string rcode));
-          ("time_taken", `Int (Duration.to_ms time_taken));
-          ("status", `String status);
-        ]
-      |> Yojson.Basic.to_string
+      Format.sprintf
+        {|{ "fin": %S, "typ": %S, "domain": %S, "client": %S, "rcode": %S, "time_taken": %u, "status": %S }|}
+        (Ptime.to_rfc3339 ~tz_offset_s:0 fin)
+        qtyp
+        (Domain_name.to_string (fst question))
+        (Ipaddr.to_string src)
+        (Dns.Rcode.to_string rcode)
+        (Duration.to_ms time_taken)
+        status
 
     let web_ui_handler t resolver js_file system_password req_method path
         auth_password =
