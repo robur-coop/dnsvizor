@@ -817,6 +817,26 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Logs.err (fun m -> m "password-auth: No password in http request");
           Some (`Authenticate ("User didn't provide a password", None))
 
+    let query_info_to_json_str qi =
+      let Dns_resolver_mirage_shared.
+            { fin; question; src; rcode; time_taken; status } =
+        qi
+      in
+      let qtyp =
+        match Dns.Packet.Question.qtype question with
+        | Some qtyp -> Fmt.to_to_string Dns.Packet.Question.pp_qtype qtyp
+        | None -> "NONE"
+      in
+      Format.sprintf
+        {|{ "fin": %S, "typ": %S, "domain": %S, "client": %S, "rcode": %S, "time_taken": %u, "status": %S }|}
+        (Ptime.to_rfc3339 ~tz_offset_s:0 fin)
+        qtyp
+        (Domain_name.to_string (fst question))
+        (Ipaddr.to_string src)
+        (Dns.Rcode.to_string rcode)
+        (Duration.to_ms time_taken)
+        status
+
     let web_ui_handler t resolver js_file system_password req_method path
         auth_password =
       let get_multipart_body content_type_header data field =
@@ -910,6 +930,18 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             (`Content
                ( Dashboard.dashboard_layout ~content:Query_logs.query_page (),
                  None ))
+      | `GET, "/api/queries" ->
+          let response closed write_and_flush data =
+            if closed () then Error ()
+            else (
+              write_and_flush ("data:" ^ data ^ "\n\n");
+              Ok ())
+          in
+          let f () =
+            Lwt_condition.wait (Resolver.queries resolver) >|= fun query ->
+            query_info_to_json_str query
+          in
+          Some (`Stream (response, f))
       | `GET, "/blocklist" ->
           let content =
             Blocklist.block_page
@@ -1113,6 +1145,26 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   | Some `Update ->
                       if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
                       else Lwt.return_unit)
+              | Ok (Some (`Stream (r, f)), _) ->
+                  let headers =
+                    H1.Headers.of_list [ ("Content-Type", "text/event-stream") ]
+                  in
+                  let response = H1.Response.create ~headers `OK in
+                  let writer = H1.Reqd.respond_with_streaming reqd response in
+                  let reply =
+                    r
+                      (fun () -> H1.Body.Writer.is_closed writer)
+                      (fun str ->
+                        H1.Body.Writer.write_string writer str;
+                        H1.Body.Writer.flush writer Fun.id)
+                  in
+                  let rec loop () =
+                    f () >>= fun data ->
+                    match reply data with
+                    | Error () -> Lwt.return_unit
+                    | Ok () -> loop ()
+                  in
+                  loop ()
               | Ok (None, _meth) ->
                   let headers =
                     H1.Headers.of_list [ ("connection", "close") ]
@@ -1216,6 +1268,26 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                           if Lwt_mvar.is_empty mvar then
                             Lwt_mvar.put mvar `Update
                           else Lwt.return_unit))
+              | Ok (Some (`Stream (r, f)), _) ->
+                  let headers =
+                    H2.Headers.of_list [ ("content-type", "text/event-stream") ]
+                  in
+                  let response = H2.Response.create ~headers `OK in
+                  let writer = H2.Reqd.respond_with_streaming reqd response in
+                  let reply =
+                    r
+                      (fun () -> H2.Body.Writer.is_closed writer)
+                      (fun str ->
+                        H2.Body.Writer.write_string writer str;
+                        H2.Body.Writer.flush writer (fun _ -> ()))
+                  in
+                  let rec loop () =
+                    f () >>= fun data ->
+                    match reply data with
+                    | Error () -> Lwt.return_unit
+                    | Ok () -> loop ()
+                  in
+                  Lwt.async loop
               | Ok (None, meth) -> (
                   match (meth, request.H2.Request.target) with
                   | `GET, path when String.starts_with ~prefix:"/dns-query" path
