@@ -1047,6 +1047,12 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           None
       | None -> None
 
+    let security_headers =
+      [
+        ("x-frame-options", "DENY");
+        ("content-security-policy", "frame-ancestors 'none'");
+      ]
+
     let request : type reqd headers request response ro wo.
         _ ->
         _ ->
@@ -1066,10 +1072,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   ?(status = `OK) data =
                 let headers =
                   H1.Headers.of_list
-                    ([
-                       ("content-type", content_type);
-                       ("content-length", string_of_int (String.length data));
-                     ]
+                    (security_headers
+                    @ [
+                        ("content-type", content_type);
+                        ("content-length", string_of_int (String.length data));
+                      ]
                     @ headers)
                 in
                 let resp = H1.Response.create ~headers status in
@@ -1128,7 +1135,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   reply ?content_type reqd ~headers ~status:`Unauthorized
                     content
               | Ok (Some (`Redirect (location, action)), _) -> (
-                  let headers = H1.Headers.of_list [ ("location", location) ] in
+                  let headers =
+                    H1.Headers.of_list
+                      (("location", location) :: security_headers)
+                  in
                   let resp = H1.Response.create ~headers `See_other in
                   Reqd.respond_with_string reqd resp "";
                   match action with
@@ -1137,7 +1147,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
                       else Lwt.return_unit)
               | Ok (Some (`Bad_request (location, action)), _) -> (
-                  let headers = H1.Headers.of_list [ ("location", location) ] in
+                  let headers =
+                    H1.Headers.of_list
+                      (("location", location) :: security_headers)
+                  in
                   let resp = H1.Response.create ~headers `Bad_request in
                   Reqd.respond_with_string reqd resp "";
                   match action with
@@ -1147,7 +1160,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       else Lwt.return_unit)
               | Ok (Some (`Stream (r, f)), _) ->
                   let headers =
-                    H1.Headers.of_list [ ("Content-Type", "text/event-stream") ]
+                    H1.Headers.of_list
+                      (("Content-Type", "text/event-stream") :: security_headers)
                   in
                   let response = H1.Response.create ~headers `OK in
                   let writer = H1.Reqd.respond_with_streaming reqd response in
@@ -1167,7 +1181,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   loop ()
               | Ok (None, _meth) ->
                   let headers =
-                    H1.Headers.of_list [ ("connection", "close") ]
+                    H1.Headers.of_list
+                      (("connection", "close") :: security_headers)
                   in
                   let resp = H1.Response.create ~headers `Not_found in
                   Reqd.respond_with_string reqd resp "";
@@ -1176,7 +1191,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                  with DoH. https://datatracker.ietf.org/doc/html/rfc8484#section-5.2 *)
               | Error status ->
                   let headers =
-                    H1.Headers.of_list [ ("connection", "close") ]
+                    H1.Headers.of_list
+                      (("connection", "close") :: security_headers)
                   in
                   let resp = H1.Response.create ~headers status in
                   Reqd.respond_with_string reqd resp "";
@@ -1186,10 +1202,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               ?(status = `OK) data =
             let headers =
               H2.Headers.of_list
-                ([
-                   ("content-type", content_type);
-                   ("content-length", string_of_int (String.length data));
-                 ]
+                (security_headers
+                @ [
+                    ("content-type", content_type);
+                    ("content-length", string_of_int (String.length data));
+                  ]
                 @ headers)
             in
             let resp = H2.Response.create ~headers status in
@@ -1247,7 +1264,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   reply ?content_type reqd ~headers ~status:`Unauthorized
                     content
               | Ok (Some (`Redirect (location, action)), _) -> (
-                  let headers = H2.Headers.of_list [ ("location", location) ] in
+                  let headers =
+                    H2.Headers.of_list
+                      (("location", location) :: security_headers)
+                  in
                   let resp = H2.Response.create ~headers `See_other in
                   Reqd.respond_with_string reqd resp "";
                   match action with
@@ -1258,7 +1278,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                             Lwt_mvar.put mvar `Update
                           else Lwt.return_unit))
               | Ok (Some (`Bad_request (location, action)), _) -> (
-                  let headers = H2.Headers.of_list [ ("location", location) ] in
+                  let headers =
+                    H2.Headers.of_list
+                      (("location", location) :: security_headers)
+                  in
                   let resp = H2.Response.create ~headers `Bad_request in
                   Reqd.respond_with_string reqd resp "";
                   match action with
@@ -1270,7 +1293,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                           else Lwt.return_unit))
               | Ok (Some (`Stream (r, f)), _) ->
                   let headers =
-                    H2.Headers.of_list [ ("content-type", "text/event-stream") ]
+                    H2.Headers.of_list
+                      (("content-type", "text/event-stream") :: security_headers)
                   in
                   let response = H2.Response.create ~headers `OK in
                   let writer = H2.Reqd.respond_with_streaming reqd response in
@@ -1322,13 +1346,15 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       Lwt.async resolve
                   | _ ->
                       let headers =
-                        H2.Headers.of_list [ ("connection", "close") ]
+                        H2.Headers.of_list
+                          (("connection", "close") :: security_headers)
                       in
                       let resp = H2.Response.create ~headers `Not_found in
                       Reqd.respond_with_string reqd resp "")
               | Error status ->
                   let headers =
-                    H2.Headers.of_list [ ("connection", "close") ]
+                    H2.Headers.of_list
+                      (("connection", "close") :: security_headers)
                   in
                   let resp = H2.Response.create ~headers status in
                   Reqd.respond_with_string reqd resp "")
