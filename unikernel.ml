@@ -408,7 +408,8 @@ module Net (N : Mirage_net.S) = struct
 
   let handle_dhcp t config buf =
     match Dhcp_wire.pkt_of_buf buf (Cstruct.length buf) with
-    | Error e ->
+    | Error `Not_dhcp -> Lwt.return_unit
+    | Error (`Msg e) ->
         Logs.err (fun m -> m "Can't parse packet: %s" e);
         Lwt.return_unit
     | Ok pkt -> (

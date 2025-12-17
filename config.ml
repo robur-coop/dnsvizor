@@ -29,7 +29,7 @@ let dnsvizor =
       package ~min:"7.0.0"
         ~sublibs:[ "ipv4"; "tcp"; "udp"; "icmpv4"; "stack-direct"; "ipv6" ]
         "tcpip";
-      package ~min:"2.1.0" "charrua";
+      package ~min:"3.0.0" "charrua";
       package "charrua-server";
       package ~min:"4.5.0" ~sublibs:[ "network" ] "mirage-runtime";
       package "tyxml";
