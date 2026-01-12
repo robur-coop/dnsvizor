@@ -1322,7 +1322,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       let elts = List.tl elts in
                       let query = String.concat "=" elts in
                       Logs.info (fun m -> m "%s" query);
-                      let query = Base64.decode_exn ~pad:false query in
+                      let query =
+                        Base64.decode_exn ~alphabet:Base64.uri_safe_alphabet
+                          ~pad:false query
+                      in
                       let resolve () =
                         Resolver.resolve_external resolver (dst, port) query
                         >>= fun (ttl, answer) ->
