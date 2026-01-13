@@ -1349,17 +1349,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       in
                       Lwt.async resolve
                   | _ ->
-                      let headers =
-                        H2.Headers.of_list
-                          (("connection", "close") :: security_headers)
-                      in
+                      let headers = H2.Headers.of_list security_headers in
                       let resp = H2.Response.create ~headers `Not_found in
                       Reqd.respond_with_string reqd resp "")
               | Error status ->
-                  let headers =
-                    H2.Headers.of_list
-                      (("connection", "close") :: security_headers)
-                  in
+                  let headers = H2.Headers.of_list security_headers in
                   let resp = H2.Response.create ~headers status in
                   Reqd.respond_with_string reqd resp "")
 
