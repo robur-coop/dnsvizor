@@ -1316,26 +1316,34 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               | Ok (None, meth) -> (
                   match (meth, request.H2.Request.target) with
                   | `GET, path when String.starts_with ~prefix:"/dns-query" path
-                    ->
+                    -> (
                       let target = request.H2.Request.target in
                       let elts = String.split_on_char '=' target in
                       let elts = List.tl elts in
                       let query = String.concat "=" elts in
-                      Logs.info (fun m -> m "%s" query);
-                      let query =
-                        Base64.decode_exn ~alphabet:Base64.uri_safe_alphabet
+                      Logs.debug (fun m -> m "%s" query);
+                      match
+                        Base64.decode ~alphabet:Base64.uri_safe_alphabet
                           ~pad:false query
-                      in
-                      let resolve () =
-                        Resolver.resolve_external resolver (dst, port) query
-                        >>= fun (ttl, answer) ->
-                        reply ~content_type:"application/dns-message"
-                          ~headers:
-                            [ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
-                          reqd answer;
-                        Lwt.return_unit
-                      in
-                      Lwt.async resolve
+                      with
+                      | Ok query ->
+                          let resolve () =
+                            Resolver.resolve_external resolver (dst, port) query
+                            >>= fun (ttl, answer) ->
+                            reply ~content_type:"application/dns-message"
+                              ~headers:
+                                [ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
+                              reqd answer;
+                            Lwt.return_unit
+                          in
+                          Lwt.async resolve
+                      | Error (`Msg msg) ->
+                          Logs.warn (fun m ->
+                              m "couldn't decode query %S: %s" query msg);
+                          let headers = H2.Headers.of_list security_headers in
+                          let resp = H2.Response.create ~headers `Bad_request in
+                          Reqd.respond_with_string reqd resp
+                            "Failed to decode query")
                   | `POST (_content_type, data), path
                     when String.starts_with ~prefix:"/dns-query" path ->
                       let resolve () =
