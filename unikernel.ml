@@ -1084,14 +1084,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 Reqd.respond_with_string reqd resp data;
                 Lwt.return_unit
               in
-              Logs.info (fun m -> m "Got a new HTTPS request!");
+              Logs.debug (fun m -> m "Got a new HTTPS request!");
               let request = Reqd.request reqd in
               let auth_password =
                 extract_password
                   (H1.Headers.get request.headers "Authorization")
               in
               Logs.info (fun m ->
-                  m "%a %s" H1.Method.pp_hum request.H1.Request.meth
+                  m "HTTPS %a %s" H1.Method.pp_hum request.H1.Request.meth
                     request.H1.Request.target);
               let r =
                 match request.H1.Request.meth with
@@ -1213,13 +1213,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             let resp = H2.Response.create ~headers status in
             Reqd.respond_with_string reqd resp data
           in
-          Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
+          Logs.debug (fun m -> m "Got a new HTTPS2 request!");
           let request = Reqd.request reqd in
           let auth_password =
             extract_password (H2.Headers.get request.headers "authorization")
           in
           Logs.info (fun m ->
-              m "%a %s" H2.Method.pp_hum request.H2.Request.meth
+              m "HTTPS2 %a %s" H2.Method.pp_hum request.H2.Request.meth
                 request.H2.Request.target);
           let r =
             match request.H2.Request.meth with
