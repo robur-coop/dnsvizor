@@ -1338,7 +1338,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                           in
                           Lwt.async resolve
                       | Error (`Msg msg) ->
-                          Logs.warn (fun m ->
+                          Logs.debug (fun m ->
                               m "couldn't decode query %S: %s" query msg);
                           let headers = H2.Headers.of_list security_headers in
                           let resp = H2.Response.create ~headers `Bad_request in
