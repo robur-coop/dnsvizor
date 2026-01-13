@@ -838,8 +838,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         (Duration.to_ms time_taken)
         status
 
-    let web_ui_handler t resolver js_file system_password req_method path
-        auth_password =
+    let web_ui_handler t resolver query_buffer js_file system_password
+        req_method path auth_password =
       let get_multipart_body content_type_header data field =
         let content_type =
           Option.fold ~none:"application/x-www-form-urlencoded\r\n"
@@ -941,8 +941,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           let f () =
             Lwt_condition.wait (Resolver.queries resolver) >|= fun query ->
             query_info_to_json_str query
-          in
-          Some (`Stream (response, f))
+          and buffered = List.map query_info_to_json_str !query_buffer in
+          Some (`Stream (response, f, buffered))
       | `GET, "/blocklist" ->
           let content =
             Blocklist.block_page
@@ -1058,6 +1058,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         _ ->
         _ ->
         _ ->
+        _ ->
         HTTP.TLS.flow ->
         Ipaddr.t * int ->
         reqd ->
@@ -1065,7 +1066,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         string ->
         string option ->
         unit =
-     fun t resolver mvar _flow (dst, port) reqd protocol js_file password ->
+     fun t resolver query_buffer mvar _flow (dst, port) reqd protocol js_file
+         password ->
       match protocol with
       | Alpn.HTTP_1_1 (module Reqd) ->
           Lwt.async (fun () ->
@@ -1125,7 +1127,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               r
               >|= Result.map (fun meth ->
-                  ( web_ui_handler t resolver js_file password meth
+                  ( web_ui_handler t resolver query_buffer js_file password meth
                       request.H1.Request.target auth_password,
                     meth ))
               >>= function
@@ -1159,7 +1161,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   | Some `Update ->
                       if Lwt_mvar.is_empty mvar then Lwt_mvar.put mvar `Update
                       else Lwt.return_unit)
-              | Ok (Some (`Stream (r, f)), _) ->
+              | Ok (Some (`Stream (r, f, buffered)), _) ->
                   let headers =
                     H1.Headers.of_list
                       (("Content-Type", "text/event-stream") :: security_headers)
@@ -1173,6 +1175,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                         H1.Body.Writer.write_string writer str;
                         H1.Body.Writer.flush writer Fun.id)
                   in
+                  List.iter (fun d -> reply d |> ignore) buffered;
                   let rec loop () =
                     f () >>= fun data ->
                     match reply data with
@@ -1254,7 +1257,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Lwt.async (fun () ->
               r
               >|= Result.map (fun meth ->
-                  ( web_ui_handler t resolver js_file password meth
+                  ( web_ui_handler t resolver query_buffer js_file password meth
                       request.H2.Request.target auth_password,
                     meth ))
               >|= function
@@ -1292,7 +1295,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                           if Lwt_mvar.is_empty mvar then
                             Lwt_mvar.put mvar `Update
                           else Lwt.return_unit))
-              | Ok (Some (`Stream (r, f)), _) ->
+              | Ok (Some (`Stream (r, f, buffered)), _) ->
                   let headers =
                     H2.Headers.of_list
                       (("content-type", "text/event-stream") :: security_headers)
@@ -1306,6 +1309,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                         H2.Body.Writer.write_string writer str;
                         H2.Body.Writer.flush writer (fun _ -> ()))
                   in
+                  List.iter (fun d -> reply d |> ignore) buffered;
                   let rec loop () =
                     f () >>= fun data ->
                     match reply data with
@@ -1358,11 +1362,26 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   Reqd.respond_with_string reqd resp "")
 
     let handler t resolver mvar js_file password =
+      let query_buffer = ref [] in
+      Lwt.async (fun () ->
+          let rec record () =
+            Lwt_condition.wait (Resolver.queries resolver) >>= fun query ->
+            let max_qb_len = 10 in
+            let rest =
+              if List.length !query_buffer >= max_qb_len then
+                List.tl !query_buffer
+              else !query_buffer
+            in
+            query_buffer := rest @ [ query ];
+            record ()
+          in
+          record ());
       {
         Alpn.error;
         request =
           (fun flow dst reqd protocol ->
-            request t resolver mvar flow dst reqd protocol js_file password);
+            request t resolver query_buffer mvar flow dst reqd protocol js_file
+              password);
       }
 
     let update_blocklist http_client resolver =
