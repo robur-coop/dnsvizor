@@ -1084,14 +1084,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 Reqd.respond_with_string reqd resp data;
                 Lwt.return_unit
               in
-              Logs.info (fun m -> m "Got a new HTTPS request!");
+              Logs.debug (fun m -> m "Got a new HTTPS request!");
               let request = Reqd.request reqd in
               let auth_password =
                 extract_password
                   (H1.Headers.get request.headers "Authorization")
               in
               Logs.info (fun m ->
-                  m "%a %s" H1.Method.pp_hum request.H1.Request.meth
+                  m "HTTPS %a %s" H1.Method.pp_hum request.H1.Request.meth
                     request.H1.Request.target);
               let r =
                 match request.H1.Request.meth with
@@ -1213,13 +1213,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             let resp = H2.Response.create ~headers status in
             Reqd.respond_with_string reqd resp data
           in
-          Logs.info (fun m -> m "Got a new DNS over HTTPS request!");
+          Logs.debug (fun m -> m "Got a new HTTPS2 request!");
           let request = Reqd.request reqd in
           let auth_password =
             extract_password (H2.Headers.get request.headers "authorization")
           in
           Logs.info (fun m ->
-              m "%a %s" H2.Method.pp_hum request.H2.Request.meth
+              m "HTTPS2 %a %s" H2.Method.pp_hum request.H2.Request.meth
                 request.H2.Request.target);
           let r =
             match request.H2.Request.meth with
@@ -1316,26 +1316,34 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               | Ok (None, meth) -> (
                   match (meth, request.H2.Request.target) with
                   | `GET, path when String.starts_with ~prefix:"/dns-query" path
-                    ->
+                    -> (
                       let target = request.H2.Request.target in
                       let elts = String.split_on_char '=' target in
                       let elts = List.tl elts in
                       let query = String.concat "=" elts in
-                      Logs.info (fun m -> m "%s" query);
-                      let query =
-                        Base64.decode_exn ~alphabet:Base64.uri_safe_alphabet
+                      Logs.debug (fun m -> m "%s" query);
+                      match
+                        Base64.decode ~alphabet:Base64.uri_safe_alphabet
                           ~pad:false query
-                      in
-                      let resolve () =
-                        Resolver.resolve_external resolver (dst, port) query
-                        >>= fun (ttl, answer) ->
-                        reply ~content_type:"application/dns-message"
-                          ~headers:
-                            [ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
-                          reqd answer;
-                        Lwt.return_unit
-                      in
-                      Lwt.async resolve
+                      with
+                      | Ok query ->
+                          let resolve () =
+                            Resolver.resolve_external resolver (dst, port) query
+                            >>= fun (ttl, answer) ->
+                            reply ~content_type:"application/dns-message"
+                              ~headers:
+                                [ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
+                              reqd answer;
+                            Lwt.return_unit
+                          in
+                          Lwt.async resolve
+                      | Error (`Msg msg) ->
+                          Logs.debug (fun m ->
+                              m "couldn't decode query %S: %s" query msg);
+                          let headers = H2.Headers.of_list security_headers in
+                          let resp = H2.Response.create ~headers `Bad_request in
+                          Reqd.respond_with_string reqd resp
+                            "Failed to decode query")
                   | `POST (_content_type, data), path
                     when String.starts_with ~prefix:"/dns-query" path ->
                       let resolve () =
