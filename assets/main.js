@@ -41,6 +41,10 @@ function startEventSource() {
 
     queryStreamEvent = new EventSource(`/api/queries`);
 
+    while (query_logs.rows.length > 1) {
+        query_logs.deleteRow(-1);
+    }
+
     const typ_class = "p-2"
     const ok_class = "p-2 text-green-800"
     const err_class = "p-2 text-red-800"
