@@ -43,6 +43,43 @@ module CA = struct
     >>= fun certificate -> Ok (certificate, pk)
 end
 
+(* This takes a list of host configurations and merge the ones for the same
+   client judged by its mac. *)
+let merge_hosts hosts =
+  List.sort (fun h h' -> Macaddr.compare h.Dhcp_server.Config.hw_addr h'.Dhcp_server.Config.hw_addr) hosts
+  |> List.fold_left (fun (acc, cur) h ->
+      match cur with
+      | None -> (acc, Some h)
+      | Some cur ->
+        if Macaddr.compare cur.Dhcp_server.Config.hw_addr h.Dhcp_server.Config.hw_addr <> 0 then
+          (cur :: acc, Some h)
+        else
+          let hw_addr = cur.hw_addr in
+          let fixed_addr =
+            match cur.fixed_addr, h.fixed_addr with
+            | Some addr, None | None, Some addr -> Some addr
+            | Some addr, Some addr' ->
+              Logs.warn (fun m -> m "Duplicate IPv4 addresses for %a: %a, %a using the former"
+                            Macaddr.pp hw_addr Ipaddr.V4.pp addr Ipaddr.V4.pp addr');
+              Some addr
+            | None, None -> None
+          in
+          let hostname =
+            match cur.hostname, h.hostname with
+            | "", hostname | hostname, "" -> hostname
+            | hostname, hostname' ->
+              Logs.debug (fun m -> m "Duplicate hostname for %a: %S, %S using the former"
+                             Macaddr.pp hw_addr hostname hostname');
+              hostname
+          in
+          let options = h.options @ cur.options in
+          let cur = { Dhcp_server.Config.hw_addr; fixed_addr; options; hostname } in
+          (acc, Some cur))
+    ([], None)
+  |> function
+  | acc, None -> acc
+  | acc, Some cur -> cur :: acc
+
 module K = struct
   open Cmdliner
   open Dnsvizor
@@ -250,6 +287,102 @@ module K = struct
     @? (if bogus_priv then Some `Bogus_priv else None)
     @? List.map (fun x -> `Dhcp_option x) dhcp_option
     @ List.map (fun x -> `Dhcp_host x) dhcp_host
+
+  module Dhcp_ext = struct
+    let mac_conv =
+      let parse = Macaddr.of_string
+      and print = Macaddr.pp in
+      Arg.conv (parse, print)
+
+    let opt_pair ?docv_opt ?docv_req opt req =
+      let docv_opt = Option.value docv_opt ~default:(Arg.conv_docv opt)
+      and docv_req = Option.value docv_req ~default:(Arg.conv_docv req) in
+      let parse s =
+        match String.index_opt s ',' with
+        | None ->
+          Result.map (fun v -> None, v) (Arg.conv_parser req s)
+        | Some i ->
+          let s_opt = String.sub s 0 i
+          and s_req = String.sub s (succ i) (String.length s - i - 1) in
+          match Arg.conv_parser opt s_opt, Arg.conv_parser req s_req with
+          | Ok opt, Ok req ->
+            Ok (Some opt, req)
+          | Error e, _ | _, Error e -> Error e
+      and print ppf v =
+        match v with
+        | None, v -> Arg.conv_printer req ppf v
+        | Some o, v ->
+          Fmt.pf ppf "%a,%a" (Arg.conv_printer opt) o (Arg.conv_printer req) v
+      in
+      let docv = Fmt.str "[%s,]%s" docv_opt docv_req in
+      Arg.conv ~docv (parse, print)
+
+    let mirage_metrics_sink =
+      let doc =
+        Arg.info ~doc:"Mirage metrics sink"
+          [ "mirage-metrics-sink" ]
+      in
+      let metrics_conv =
+        (* TODO: more precise converter than [Arg.string] *)
+        opt_pair ~docv_opt:"MAC" ~docv_req:"SINK" mac_conv Arg.string
+      in
+      Arg.(value & opt_all metrics_conv [] doc)
+
+    let mirage_vivso =
+      let doc =
+        Arg.info ~doc:"Mirage Vendor-Identifying vendor-specific option."
+          [ "mirage-vivso" ]
+      in
+      let subopt_code =
+        let parse s =
+          match Arg.(conv_parser int) s with
+          | Ok n ->
+            if n < 0  || n > 255 then
+              Error (`Msg "Suboption code must be between 0-255")
+            else Ok n
+          | Error _ as e -> e
+        and print = Arg.(conv_printer int) in
+        Arg.conv ~docv:"SUBOPT-CODE" (parse, print)
+      in
+      let vivso_conv =
+        Arg.pair subopt_code
+          (opt_pair mac_conv Arg.string
+             ~docv_opt:"MAC" ~docv_req:"DATA")
+      in
+      Arg.(value & opt_all vivso_conv [] doc)
+  end
+
+  let mirage_dhcp =
+    let open Cmdliner.Term.Syntax in
+    let+ metrics_sinks = Dhcp_ext.mirage_metrics_sink
+    and+ vivso = Dhcp_ext.mirage_vivso in
+    let metrics_sink_default, metrics_sinks =
+      let option sink =
+        (* 49836 is MirageOS private enterprise number *)
+        Dhcp_wire.Vi_vendor_info [ 49836l, [ 0, sink ]]
+      in
+      (* It seems [Dhcp_server.Config.hostname] isn't actually used so we can
+         put anything there. *)
+      List.partition_map (function
+          | None, sink -> Left (option sink)
+          | Some hw_addr, sink ->
+          Right { Dhcp_server.Config.hw_addr; options = [ option sink ]; fixed_addr = None; hostname = "" })
+        metrics_sinks
+    in
+    let default_vivso, vivso =
+      let option code data =
+        Dhcp_wire.Vi_vendor_info [ 49836l, [code, data] ]
+      in
+      List.partition_map (function
+          | (subopt_code, (None, opt)) ->
+            Left (option subopt_code opt)
+          | (subopt_code, (Some hw_addr, opt)) ->
+            Right { Dhcp_server.Config.hw_addr; options = [ option subopt_code opt ]; fixed_addr = None; hostname = "" })
+        vivso
+    in
+    metrics_sink_default @ default_vivso, merge_hosts (metrics_sinks @ vivso)
+
+  let mirage_dhcp = Mirage_runtime.register_arg mirage_dhcp
 
   let qname_minimisation =
     let doc =
@@ -681,6 +814,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       Option.to_list
         (Option.map (fun x -> Dhcp_wire.Routers [ x ]) (K.ipv4_gateway ()))
     and dns_server = [ Dhcp_wire.Dns_servers [ ipv4_address ] ] in
+    let mirage_default_options, mirage_hosts = K.mirage_dhcp () in
     let options =
       (if
          List.exists
@@ -700,6 +834,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
              (fun domain ->
                Dhcp_wire.Domain_name (Domain_name.to_string domain))
              domain)
+      @ mirage_default_options
     in
     let hosts =
       List.concat_map
@@ -713,6 +848,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     | None -> acc
                     | Some additional_options ->
                         (* XXX: do we need to deduplicate?! *)
+                        (* The [hostname] field doesn't actually do anything -
+                           so we add a Hostname dhcp option *)
+                        Dhcp_wire.Hostname hostname ::
                         additional_options @ acc)
                   options sets
               in
@@ -720,6 +858,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             macs)
         dhcp_hosts
     in
+    let hosts = merge_hosts (mirage_hosts @ hosts) in
     let max_lease_time = Option.map (fun lt -> lt * 2) default_lease_time in
     let dhcp_config =
       Dhcp_server.Config.make ?hostname:None ?default_lease_time ?max_lease_time
