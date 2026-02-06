@@ -1,0 +1,23 @@
+opam-version: "2.0"
+synopsis:     "Library implementing DNSvizor CSR things"
+name:         "dnsvizor-csr"
+homepage:     "https://github.com/robur-coop/dnsvizor"
+dev-repo:     "git+https://github.com/robur-coop/dnsvizor.git"
+bug-reports:  "https://github.com/robur-coop/dnsvizor/issues"
+doc:          "https://github.com/robur-coop/dnsvizor/doc"
+author:       ["Robur <team@robur.coop>"]
+maintainer:   ["Robur <team@robur.coop>"]
+license:      "BSD-2-Clause"
+
+build: [
+  ["dune" "subst" ] {dev}
+  ["dune" "build"   "-p" name "-j" jobs]
+  ["dune" "runtest" "-p" name "-j" jobs] {with-test}
+]
+
+depends: [
+  "dune" {>= "2.9"}
+  "ocaml" {>= "4.14.0"}
+  "odoc" {with-doc}
+  "x509"
+]
