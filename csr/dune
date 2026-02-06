@@ -1,0 +1,4 @@
+(library
+ (name dnsvizor_csr)
+ (public_name dnsvizor-csr)
+ (libraries x509))
