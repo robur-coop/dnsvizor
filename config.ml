@@ -6,7 +6,7 @@ open Mirage
 let assets = crunch "assets"
 
 let dnsvizor =
-  let local_libs = [ "dnsvizor" ] in
+  let local_libs = [ "dnsvizor"; "dnsvizor-csr" ] in
   let packages =
     [
       package "logs";
@@ -23,7 +23,7 @@ let dnsvizor =
       package ~min:"10.2.1" ~sublibs:[ "mirage" ] "dns-stub";
       package "dns-tsig";
       package "dns-server";
-      package "dns";
+      package "dns-certify";
       package "paf" ~sublibs:[ "mirage"; "alpn" ];
       package ~min:"3.0.0" "ethernet";
       package ~min:"3.0.0" ~sublibs:[ "mirage" ] "arp";
