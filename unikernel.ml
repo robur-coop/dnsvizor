@@ -2043,7 +2043,25 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             Lwt.return (None, [])
         | Some _ -> assert false)
       >>= function
-      | None, new_options -> Lwt.return (Ok (options @ new_options))
+      | None, new_options ->
+        let options =
+          (* Strip mirage-certify *)
+          List.map
+            (function
+              | Dhcp_wire.Vi_vendor_info vivso ->
+                let vivso =
+                  List.map
+                    (function
+                      | 49836l, subopts ->
+                        ( 49836l, List.filter (function | 1, _ -> false | _ -> true) subopts )
+                      | x -> x)
+                    vivso
+                in
+                Dhcp_wire.Vi_vendor_info vivso
+              | opt -> opt)
+            options
+        in
+        Lwt.return (Ok (options @ new_options))
       | Some hostname, new_options ->
           if List.mem pkt.Dhcp_wire.chaddr (K.mirage_certify ()) then
             match
@@ -2068,6 +2086,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                         (* Replace the mirage-certify option with the domain name where to
                find the certificate. *)
                         let options =
+                          let domain = Option.map Domain_name.to_string domain in
+                          assert (domain <> Some "");
                           List.map
                             (function
                               | Dhcp_wire.Vi_vendor_info vivso ->
@@ -2079,12 +2099,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                                               List.filter_map
                                                 (function
                                                   | 1, _ ->
-                                                      Option.map
-                                                        (fun domain ->
-                                                          ( 1,
-                                                            Domain_name
-                                                            .to_string domain ))
-                                                        domain
+                                                    Option.map (fun d -> 1, d) domain
                                                   | subopt -> Some subopt)
                                                 subopts )
                                         | x -> x)
@@ -2095,7 +2110,25 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                             options
                         in
                         Lwt.return (Ok (options @ new_options))))
-          else Lwt.return (Ok (options @ new_options))
+          else
+            let options =
+              (* Strip mirage-certify *)
+              List.map
+                (function
+                  | Dhcp_wire.Vi_vendor_info vivso ->
+                    let vivso =
+                      List.map
+                        (function
+                          | 49836l, subopts ->
+                            ( 49836l, List.filter (function | 1, _ -> false | _ -> true) subopts )
+                          | x -> x)
+                        vivso
+                    in
+                    Dhcp_wire.Vi_vendor_info vivso
+                  | opt -> opt)
+                options
+            in
+            Lwt.return (Ok (options @ new_options))
   end
 
   let start net assets =
