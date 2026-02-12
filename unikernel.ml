@@ -1795,7 +1795,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     let flow = Dns_mirage.of_flow flow in
                     query_certificate_or_csr flow hostname key_name key_domain
                       key csr
-                    >|= Result.map Option.some
+                    >|= Result.map (fun domain -> Some (ip, domain))
               else (
                 Logs.warn (fun m ->
                     m "Requested a DNS update with %a, but key domain is %a"
@@ -2094,7 +2094,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                         (* Replace the mirage-certify option with the domain name where to
                find the certificate. *)
                         let options' =
-                          let domain = Option.map Domain_name.to_string domain in
+                          let domain = Option.map Dnsvizor_csr.encode_src domain in
                           assert (domain <> Some "");
                           List.map
                             (function
