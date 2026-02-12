@@ -854,6 +854,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     and dns_server = [ Dhcp_wire.Dns_servers [ ipv4_address ] ] in
     let mirage_default_options, mirage_hosts = K.mirage_dhcp () in
     let certify_hosts =
+      (* The empty string is a dummy value that will be replaced in dhcp_lease_cb *)
       let option = Dhcp_wire.Vi_vendor_info [ (49836l, [ (1, "") ]) ] in
       List.map
         (fun hw_addr ->
@@ -2076,7 +2077,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               Dhcp_wire.collect_vi_vendor_class options
               |> List.assoc_opt 49836l
             with
-            | None -> Lwt.return (Ok (options' @ new_options))
+            | None ->
+              (* As the client is not in the list we don't need to strip *)
+              Lwt.return (Ok (options' @ new_options))
             | Some data -> (
                 (* TODO: how do we future proof this? *)
                 match Dnsvizor_csr.decode data with
