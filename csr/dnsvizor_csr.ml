@@ -24,3 +24,41 @@ let decode s =
     else Ok (String.sub s off len)
   in
   X509.Signing_request.decode_der data
+
+
+
+let encode_src (ip, domain) =
+  (match ip with
+   | Ipaddr.V4 ip ->
+     "4" ^ Ipaddr.V4.to_octets ip
+   | Ipaddr.V6 ip ->
+     "6" ^ Ipaddr.V6.to_octets ip) ^
+  Domain_name.to_string domain
+
+let decode_src s =
+  let ( let* ) = Result.bind in
+  let* v =
+    if String.length s < 1 then
+      Error (`Msg "Truncated")
+    else match String.get s 0 with
+      | '4' -> Ok `V4
+      | '6' -> Ok `V6
+      | _illegal -> Error (`Msg "Bad ip type")
+  in
+  let* ip, off =
+    match v with
+    | `V4 ->
+      if String.length s < 1 + 4 then
+        Error (`Msg "Truncated")
+      else
+        let* ipv4 = Ipaddr.V4.of_octets ~off:1 s in
+        Ok (Ipaddr.V4 ipv4, 1 + 4)
+    | `V6 ->
+      if String.length s < 1 + 16 then
+        Error (`Msg "Truncated")
+      else
+        let* ipv6 = Ipaddr.V6.of_octets ~off:1 s in
+        Ok (Ipaddr.V6 ipv6, 1 + 16)
+  in
+  let* domain = Domain_name.of_string (String.sub s off (String.length s - off)) in
+  Ok (ip, domain)
