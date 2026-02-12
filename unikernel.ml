@@ -571,7 +571,8 @@ module Net (N : Mirage_net.S) = struct
     mutable leases : Dhcp_server.Lease.database;
     mutable lease_acquired :
       Dhcp_server.Lease.t ->
-      theirs:Dhcp_wire.pkt ->
+      pkt:Dhcp_wire.pkt ->
+      theirs:Dhcp_wire.dhcp_option list ->
       ours:Dhcp_wire.dhcp_option list ->
       (Dhcp_wire.dhcp_option list, unit) result Lwt.t;
   }
@@ -612,7 +613,7 @@ module Net (N : Mirage_net.S) = struct
                         (Dhcp_server.Lease.to_string lease)
                         Fmt.(list ~sep:(any ", ") string)
                         (List.map Dhcp_wire.dhcp_option_to_string opts));
-                  t.lease_acquired lease ~theirs:pkt ~ours:opts >>= function
+                  t.lease_acquired lease ~pkt ~theirs:opts ~ours:reply.options >>= function
                   | Ok options ->
                       let reply = Dhcp_wire.{ reply with options } in
                       Lwt.return (Ok reply)
@@ -651,7 +652,7 @@ module Net (N : Mirage_net.S) = struct
 
   let connect net config =
     let leases = Dhcp_server.Lease.make_db () in
-    let lease_acquired _ ~theirs:_ ~ours:_ = Lwt.return (Ok []) in
+    let lease_acquired _ ~pkt:_ ~theirs:_ ~ours:_ = Lwt.return (Ok []) in
     { net; config; leases; lease_acquired }
 
   let disconnect _ =
@@ -1998,7 +1999,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               Logs.info (fun m -> m "no TLSTUNNEL server IP provided");
               Lwt.return [])
 
-    let dhcp_lease_cb tcp resolver domain lease ~theirs:pkt ~ours:options =
+    let dhcp_lease_cb tcp resolver domain lease ~pkt ~theirs:options ~ours:options' =
       (match
          ( List.find_opt
              (function Dhcp_wire.Hostname _ -> true | _ -> false)
@@ -2051,7 +2052,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         | Some _ -> assert false)
       >>= function
       | None, new_options ->
-        let options =
+        let options' =
           (* Strip mirage-certify *)
           List.map
             (function
@@ -2066,16 +2067,16 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 in
                 Dhcp_wire.Vi_vendor_info vivso
               | opt -> opt)
-            options
+            options'
         in
-        Lwt.return (Ok (options @ new_options))
+        Lwt.return (Ok (options' @ new_options))
       | Some hostname, new_options ->
           if List.mem pkt.Dhcp_wire.chaddr (K.mirage_certify ()) then
             match
-              Dhcp_wire.collect_vi_vendor_class pkt.options
+              Dhcp_wire.collect_vi_vendor_class options
               |> List.assoc_opt 49836l
             with
-            | None -> Lwt.return (Ok (options @ new_options))
+            | None -> Lwt.return (Ok (options' @ new_options))
             | Some data -> (
                 (* TODO: how do we future proof this? *)
                 match Dnsvizor_csr.decode data with
@@ -2092,7 +2093,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     | Ok domain ->
                         (* Replace the mirage-certify option with the domain name where to
                find the certificate. *)
-                        let options =
+                        let options' =
                           let domain = Option.map Domain_name.to_string domain in
                           assert (domain <> Some "");
                           List.map
@@ -2114,11 +2115,11 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                                   in
                                   Dhcp_wire.Vi_vendor_info vivso
                               | opt -> opt)
-                            options
+                            options'
                         in
-                        Lwt.return (Ok (options @ new_options))))
+                        Lwt.return (Ok (options' @ new_options))))
           else
-            let options =
+            let options' =
               (* Strip mirage-certify *)
               List.map
                 (function
@@ -2133,9 +2134,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     in
                     Dhcp_wire.Vi_vendor_info vivso
                   | opt -> opt)
-                options
+                options'
             in
-            Lwt.return (Ok (options @ new_options))
+            Lwt.return (Ok (options' @ new_options))
   end
 
   let start net assets =
