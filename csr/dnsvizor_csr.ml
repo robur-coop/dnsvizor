@@ -12,10 +12,10 @@ let encode csr =
 let decode s =
   let ( let* ) = Result.bind in
   let* len =
-    if String.length s < prefix_len then Error (`Msg "Truncated")
+    if String.length s < prefix_len then Error `Not_csr
     else if String.starts_with ~prefix s then
       Ok (String.get_uint16_be s prefix_len)
-    else Error (`Msg "Not a CSR")
+    else Error `Not_csr
   in
   let off = prefix_len + 2 in
   let* data =

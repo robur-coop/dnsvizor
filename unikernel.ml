@@ -2080,17 +2080,24 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             | None ->
               (* As the client is not in the list we don't need to strip *)
               Lwt.return (Ok (options' @ new_options))
-            | Some data -> (
-                (* TODO: how do we future proof this? *)
-                match Dnsvizor_csr.decode data with
-                | Error (`Msg e) ->
-                    Logs.warn (fun m ->
-                        m
-                          "Error decoding Mirage vendor-identifying vendor \
-                           class data: %s"
-                          e);
-                    Lwt.return_error ()
-                | Ok csr -> (
+            | Some datas -> (
+                match
+                  List.find_map
+                    (fun data ->
+                       match Dnsvizor_csr.decode data with
+                       | Error `Not_csr -> None
+                       | Error (`Msg e) ->
+                         Logs.warn (fun m ->
+                             m
+                               "Error decoding Mirage vendor-identifying vendor \
+                                class data: %s"
+                               e);
+                         None
+                       | Ok csr -> Some csr)
+                    datas
+                with
+                | None -> Lwt.return_error ()
+                | Some csr -> (
                     query_certificate_or_csr tcp hostname csr >>= function
                     | Error _ -> Lwt.return_error ()
                     | Ok domain ->
