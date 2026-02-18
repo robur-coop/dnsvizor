@@ -613,7 +613,8 @@ module Net (N : Mirage_net.S) = struct
                         (Dhcp_server.Lease.to_string lease)
                         Fmt.(list ~sep:(any ", ") string)
                         (List.map Dhcp_wire.dhcp_option_to_string opts));
-                  t.lease_acquired lease ~pkt ~theirs:opts ~ours:reply.options >>= function
+                  t.lease_acquired lease ~pkt ~theirs:opts ~ours:reply.options
+                  >>= function
                   | Ok options ->
                       let reply = Dhcp_wire.{ reply with options } in
                       Lwt.return (Ok reply)
@@ -2000,7 +2001,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               Logs.info (fun m -> m "no TLSTUNNEL server IP provided");
               Lwt.return [])
 
-    let dhcp_lease_cb tcp resolver domain lease ~pkt ~theirs:options ~ours:options' =
+    let dhcp_lease_cb tcp resolver domain lease ~pkt ~theirs:options
+        ~ours:options' =
       (match
          ( List.find_opt
              (function Dhcp_wire.Hostname _ -> true | _ -> false)
@@ -2053,47 +2055,49 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         | Some _ -> assert false)
       >>= function
       | None, new_options ->
-        let options' =
-          (* Strip mirage-certify *)
-          List.map
-            (function
-              | Dhcp_wire.Vi_vendor_info vivso ->
-                let vivso =
-                  List.map
-                    (function
-                      | 49836l, subopts ->
-                        ( 49836l, List.filter (function | 1, _ -> false | _ -> true) subopts )
-                      | x -> x)
-                    vivso
-                in
-                Dhcp_wire.Vi_vendor_info vivso
-              | opt -> opt)
-            options'
-        in
-        Lwt.return (Ok (options' @ new_options))
+          let options' =
+            (* Strip mirage-certify *)
+            List.map
+              (function
+                | Dhcp_wire.Vi_vendor_info vivso ->
+                    let vivso =
+                      List.map
+                        (function
+                          | 49836l, subopts ->
+                              ( 49836l,
+                                List.filter
+                                  (function 1, _ -> false | _ -> true)
+                                  subopts )
+                          | x -> x)
+                        vivso
+                    in
+                    Dhcp_wire.Vi_vendor_info vivso
+                | opt -> opt)
+              options'
+          in
+          Lwt.return (Ok (options' @ new_options))
       | Some hostname, new_options ->
           if List.mem pkt.Dhcp_wire.chaddr (K.mirage_certify ()) then
             match
-              Dhcp_wire.collect_vi_vendor_class options
-              |> List.assoc_opt 49836l
+              Dhcp_wire.collect_vi_vendor_class options |> List.assoc_opt 49836l
             with
             | None ->
-              (* As the client is not in the list we don't need to strip *)
-              Lwt.return (Ok (options' @ new_options))
+                (* As the client is not in the list we don't need to strip *)
+                Lwt.return (Ok (options' @ new_options))
             | Some datas -> (
                 match
                   List.find_map
                     (fun data ->
-                       match Dnsvizor_csr.decode data with
-                       | Error `Not_csr -> None
-                       | Error (`Msg e) ->
-                         Logs.warn (fun m ->
-                             m
-                               "Error decoding Mirage vendor-identifying vendor \
-                                class data: %s"
-                               e);
-                         None
-                       | Ok csr -> Some csr)
+                      match Dnsvizor_csr.decode data with
+                      | Error `Not_csr -> None
+                      | Error (`Msg e) ->
+                          Logs.warn (fun m ->
+                              m
+                                "Error decoding Mirage vendor-identifying \
+                                 vendor class data: %s"
+                                e);
+                          None
+                      | Ok csr -> Some csr)
                     datas
                 with
                 | None -> Lwt.return_error ()
@@ -2104,7 +2108,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                         (* Replace the mirage-certify option with the domain name where to
                find the certificate. *)
                         let options' =
-                          let domain = Option.map Dnsvizor_csr.encode_src domain in
+                          let domain =
+                            Option.map Dnsvizor_csr.encode_src domain
+                          in
                           assert (domain <> Some "");
                           List.map
                             (function
@@ -2117,7 +2123,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                                               List.filter_map
                                                 (function
                                                   | 1, _ ->
-                                                    Option.map (fun d -> 1, d) domain
+                                                      Option.map
+                                                        (fun d -> (1, d))
+                                                        domain
                                                   | subopt -> Some subopt)
                                                 subopts )
                                         | x -> x)
@@ -2134,15 +2142,18 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               List.map
                 (function
                   | Dhcp_wire.Vi_vendor_info vivso ->
-                    let vivso =
-                      List.map
-                        (function
-                          | 49836l, subopts ->
-                            ( 49836l, List.filter (function | 1, _ -> false | _ -> true) subopts )
-                          | x -> x)
-                        vivso
-                    in
-                    Dhcp_wire.Vi_vendor_info vivso
+                      let vivso =
+                        List.map
+                          (function
+                            | 49836l, subopts ->
+                                ( 49836l,
+                                  List.filter
+                                    (function 1, _ -> false | _ -> true)
+                                    subopts )
+                            | x -> x)
+                          vivso
+                      in
+                      Dhcp_wire.Vi_vendor_info vivso
                   | opt -> opt)
                 options'
             in
