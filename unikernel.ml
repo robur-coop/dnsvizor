@@ -1726,11 +1726,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           match Domain_name.prepend_label domain name with
           | Ok fqdn ->
               Logs.info (fun m -> m "recording %a" Domain_name.pp fqdn);
+              let ptr_name = Ipaddr.V4.to_domain_name lease.Dhcp_server.Lease.addr in
               let trie = Resolver.primary_data resolver in
               let a_record =
                 (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
               in
+              let ptr_record = (3600l, Domain_name.host_exn fqdn) in
               let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
+              let trie = Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie in
               Resolver.update_primary_data resolver trie
           | Error (`Msg msg) ->
               Logs.warn (fun m ->
