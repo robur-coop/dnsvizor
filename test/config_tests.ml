@@ -4,12 +4,8 @@ let msg_t =
   let pp ppf (`Msg s) = Fmt.string ppf s in
   Alcotest.testable pp (fun (`Msg a) (`Msg b) -> String.equal a b)
 
-let dhcp_range_t =
-  Alcotest.testable pp_dhcp_range eq_dhcp_range
-
-let dhcp_host_t =
-  Alcotest.testable pp_dhcp_host eq_dhcp_host
-
+let dhcp_range_t = Alcotest.testable pp_dhcp_range eq_dhcp_range
+let dhcp_host_t = Alcotest.testable pp_dhcp_host eq_dhcp_host
 let parse_one_arg rule input = parse_one (rule arg_end_of_directive) input
 
 let ok_dhcp_range () =
@@ -215,8 +211,7 @@ let ok_dhcp_host_dnsmasq_conf_example =
       *)
     ]
 
-let domain_t =
-  Alcotest.testable pp_domain eq_domain
+let domain_t = Alcotest.testable pp_domain eq_domain
 
 let ok_domain () =
   let input = "home.lan" in
@@ -303,11 +298,11 @@ let string_of_file filename =
     content
   with _ -> Alcotest.failf "Error reading file %S" file
 
-let config_t =
-  Alcotest.testable (pp_config `File) eq_config
+let config_t = Alcotest.testable (pp_config `File) eq_config
 
 let test_configuration config file () =
-  Alcotest.(check (result config_t msg_t) "DHCP configuration is good" (Ok config)
+  Alcotest.(
+    check (result config_t msg_t) "DHCP configuration is good" (Ok config)
       (parse_file (string_of_file file)))
 
 let dhcp_option_conf =

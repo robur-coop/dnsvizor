@@ -98,20 +98,20 @@ type dhcp_range = {
   lease_time : int option;
 }
 
-let opt_eq f a b = match a, b with
-  | None, None -> true
-  | Some a, Some b -> f a b
-  | _ -> false
+let opt_eq f a b =
+  match (a, b) with None, None -> true | Some a, Some b -> f a b | _ -> false
 
 let eq_dhcp_range a b =
   let eq_ip a b = Ipaddr.V4.compare a b = 0 in
-  let eq_mode a b = match a, b with `Static, `Static | `Proxy, `Proxy -> true | _ -> false in
-  eq_ip a.start_addr b.start_addr &&
-  opt_eq eq_ip a.end_addr b.end_addr &&
-  opt_eq eq_mode a.mode b.mode &&
-  opt_eq eq_ip a.netmask b.netmask &&
-  opt_eq eq_ip a.broadcast b.broadcast &&
-  opt_eq Int.equal a.lease_time b.lease_time
+  let eq_mode a b =
+    match (a, b) with `Static, `Static | `Proxy, `Proxy -> true | _ -> false
+  in
+  eq_ip a.start_addr b.start_addr
+  && opt_eq eq_ip a.end_addr b.end_addr
+  && opt_eq eq_mode a.mode b.mode
+  && opt_eq eq_ip a.netmask b.netmask
+  && opt_eq eq_ip a.broadcast b.broadcast
+  && opt_eq Int.equal a.lease_time b.lease_time
 
 type dhcp_host = {
   id : [ `Any_client_id | `Client_id of string ] option;
@@ -134,20 +134,30 @@ type dhcp_host = {
    fields questionable. *)
 
 let eq_dhcp_host a b =
-  let eq_id a b = match a, b with `Any_client_id, `Any_client_id -> true | `Client_id a, `Client_id b -> String.equal a b | _ -> false in
+  let eq_id a b =
+    match (a, b) with
+    | `Any_client_id, `Any_client_id -> true
+    | `Client_id a, `Client_id b -> String.equal a b
+    | _ -> false
+  in
   let eq_mac a b = Macaddr.compare a b = 0 in
   let eq_ipv4 a b = Ipaddr.V4.compare a b = 0 in
   let eq_ipv6 a b = Ipaddr.V6.compare a b = 0 in
-  let opt_eq f a b = match a, b with None, None -> true | Some a, Some b -> f a b | _ -> false in
-  opt_eq eq_id a.id b.id &&
-  List.equal String.equal a.sets b.sets &&
-  List.equal String.equal a.tags b.tags &&
-  List.equal eq_mac a.macs b.macs &&
-  opt_eq eq_ipv4 a.ipv4 b.ipv4 &&
-  opt_eq eq_ipv6 a.ipv6 b.ipv6 &&
-  opt_eq Int.equal a.lease_time b.lease_time &&
-  a.ignore = b.ignore &&
-  opt_eq Domain_name.equal a.domain_name b.domain_name
+  let opt_eq f a b =
+    match (a, b) with
+    | None, None -> true
+    | Some a, Some b -> f a b
+    | _ -> false
+  in
+  opt_eq eq_id a.id b.id
+  && List.equal String.equal a.sets b.sets
+  && List.equal String.equal a.tags b.tags
+  && List.equal eq_mac a.macs b.macs
+  && opt_eq eq_ipv4 a.ipv4 b.ipv4
+  && opt_eq eq_ipv6 a.ipv6 b.ipv6
+  && opt_eq Int.equal a.lease_time b.lease_time
+  && a.ignore = b.ignore
+  && opt_eq Domain_name.equal a.domain_name b.domain_name
 
 let pp_duration ppf = function
   | x when x = infinite -> Fmt.string ppf "infinite"
@@ -448,9 +458,14 @@ type dhcp_option = {
 }
 
 let eq_dhcp_option a b =
-  List.equal String.equal a.tags b.tags &&
-  (match a.vendor, b.vendor with None, None -> true | Some a, Some b -> String.equal a b | _ -> false) &&
-  String.equal (Dhcp_wire.dhcp_option_to_string a.option) (Dhcp_wire.dhcp_option_to_string b.option)
+  List.equal String.equal a.tags b.tags
+  && (match (a.vendor, b.vendor) with
+    | None, None -> true
+    | Some a, Some b -> String.equal a b
+    | _ -> false)
+  && String.equal
+       (Dhcp_wire.dhcp_option_to_string a.option)
+       (Dhcp_wire.dhcp_option_to_string b.option)
 
 let dhcp_opt_code =
   let integer_opt =
@@ -534,13 +549,14 @@ type domain =
     option
 
 let eq_domain a b =
-  Domain_name.equal (fst a) (fst b) &&
-  match snd a, snd b with
+  Domain_name.equal (fst a) (fst b)
+  &&
+  match (snd a, snd b) with
   | None, None -> true
-  | Some `Interface a, Some `Interface b -> String.equal a b
-  | Some `Ip a, Some `Ip b -> Ipaddr.V4.Prefix.compare a b = 0
-  | Some `Ip_range (a1, a2), Some `Ip_range (b1, b2) ->
-    Ipaddr.V4.compare a1 b1 = 0 && Ipaddr.V4.compare a2 b2 = 0
+  | Some (`Interface a), Some (`Interface b) -> String.equal a b
+  | Some (`Ip a), Some (`Ip b) -> Ipaddr.V4.Prefix.compare a b = 0
+  | Some (`Ip_range (a1, a2)), Some (`Ip_range (b1, b2)) ->
+      Ipaddr.V4.compare a1 b1 = 0 && Ipaddr.V4.compare a2 b2 = 0
   | _ -> false
 
 let pp_domain ppf (domain, ip_or_interface) =
@@ -608,10 +624,9 @@ type config_item =
   | `Dnssec
   | `Bogus_priv ]
 
-let eq_config_item a b = match a, b with
-  | `No_hosts, `No_hosts
-  | `Dnssec, `Dnssec
-  | `Bogus_priv, `Bogus_priv -> true
+let eq_config_item a b =
+  match (a, b) with
+  | `No_hosts, `No_hosts | `Dnssec, `Dnssec | `Bogus_priv, `Bogus_priv -> true
   | `Dhcp_range a, `Dhcp_range b -> eq_dhcp_range a b
   | `Dhcp_host a, `Dhcp_host b -> eq_dhcp_host a b
   | `Domain a, `Domain b -> eq_domain a b
@@ -621,10 +636,12 @@ let eq_config_item a b = match a, b with
 type config = [ config_item | `Ignored ] list
 
 let eq_config a b =
-  List.length a = List.length b &&
-  List.for_all (function
-      | `Ignored -> true
-      | #config_item as ci -> List.exists (eq_config_item ci) b) a
+  List.length a = List.length b
+  && List.for_all
+       (function
+         | `Ignored -> true
+         | #config_item as ci -> List.exists (eq_config_item ci) b)
+       a
 
 let pp_config_item mode ppf item =
   let pfx = match mode with `File -> Fmt.nop | `Arg -> Fmt.any "--" in

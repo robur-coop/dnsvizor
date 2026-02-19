@@ -56,7 +56,6 @@ val pp_domain : domain Fmt.t
 val eq_domain : domain -> domain -> bool
 val domain_docv : string
 val domain_c : domain Cmdliner.Arg.conv
-
 val ignore_c : string -> string Cmdliner.Arg.conv
 
 type config =
