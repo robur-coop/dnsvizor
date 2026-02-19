@@ -143,12 +143,6 @@ let eq_dhcp_host a b =
   let eq_mac a b = Macaddr.compare a b = 0 in
   let eq_ipv4 a b = Ipaddr.V4.compare a b = 0 in
   let eq_ipv6 a b = Ipaddr.V6.compare a b = 0 in
-  let opt_eq f a b =
-    match (a, b) with
-    | None, None -> true
-    | Some a, Some b -> f a b
-    | _ -> false
-  in
   opt_eq eq_id a.id b.id
   && List.equal String.equal a.sets b.sets
   && List.equal String.equal a.tags b.tags
@@ -551,13 +545,15 @@ type domain =
 let eq_domain a b =
   Domain_name.equal (fst a) (fst b)
   &&
-  match (snd a, snd b) with
-  | None, None -> true
-  | Some (`Interface a), Some (`Interface b) -> String.equal a b
-  | Some (`Ip a), Some (`Ip b) -> Ipaddr.V4.Prefix.compare a b = 0
-  | Some (`Ip_range (a1, a2)), Some (`Ip_range (b1, b2)) ->
+  let eq a b =
+  match a, b with
+  | `Interface a, `Interface b -> String.equal a b
+  | `Ip a, `Ip b -> Ipaddr.V4.Prefix.compare a b = 0
+  | `Ip_range (a1, a2), `Ip_range (b1, b2) ->
       Ipaddr.V4.compare a1 b1 = 0 && Ipaddr.V4.compare a2 b2 = 0
   | _ -> false
+  in
+  opt_eq eq (snd a) (snd b)
 
 let pp_domain ppf (domain, ip_or_interface) =
   Fmt.pf ppf "%a%a" Domain_name.pp domain
