@@ -1780,10 +1780,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let a_record =
                 (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
               in
-              let ptr_record = (3600l, Domain_name.host_exn fqdn) in
               let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
               let trie =
-                Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie
+                match Domain_name.host fqdn with
+                | Ok host ->
+                    let ptr_record = (3600l, host) in
+                    Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie
+                | Error (`Msg msg) ->
+                    Logs.warn (fun m ->
+                        m "couldn't construct a host name from %a: %S"
+                          Domain_name.pp fqdn msg);
+                    trie
               in
               Resolver.update_primary_data resolver trie
           | Error (`Msg msg) ->
