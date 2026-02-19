@@ -2005,6 +2005,27 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
     let dhcp_lease_cb tcp resolver domain lease ~pkt ~theirs:options
         ~ours:options' =
+      let strip_mirage_certify options =
+        List.filter_map
+          (function
+            | Dhcp_wire.Vi_vendor_info vivso ->
+              let vivso =
+                List.filter_map
+                  (function
+                    | 49836l(*mirage_pen*), subopts ->
+                      let subopts =
+                        List.filter (function 1, _ -> false | _ -> true) subopts
+                      in
+                      if subopts = [] then
+                        None
+                      else Some (mirage_pen, subopts)
+                    | x -> Some x)
+                  vivso
+              in
+              if vivso = [] then None else Some (Dhcp_wire.Vi_vendor_info vivso)
+            | opt -> Some opt)
+          options
+      in
       (match
          ( List.find_opt
              (function Dhcp_wire.Hostname _ -> true | _ -> false)
@@ -2057,26 +2078,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         | Some _ -> assert false)
       >>= function
       | None, new_options ->
-          let options' =
-            (* Strip mirage-certify *)
-            List.map
-              (function
-                | Dhcp_wire.Vi_vendor_info vivso ->
-                    let vivso =
-                      List.map
-                        (function
-                          | 49836l (*mirage_pen*), subopts ->
-                              ( mirage_pen,
-                                List.filter
-                                  (function 1, _ -> false | _ -> true)
-                                  subopts )
-                          | x -> x)
-                        vivso
-                    in
-                    Dhcp_wire.Vi_vendor_info vivso
-                | opt -> opt)
-              options'
-          in
+          let options' = strip_mirage_certify options' in
           Lwt.return (Ok (options' @ new_options))
       | Some hostname, new_options ->
           if List.mem pkt.Dhcp_wire.chaddr (K.mirage_certify ()) then
@@ -2139,26 +2141,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                         in
                         Lwt.return (Ok (options' @ new_options))))
           else
-            let options' =
-              (* Strip mirage-certify *)
-              List.map
-                (function
-                  | Dhcp_wire.Vi_vendor_info vivso ->
-                      let vivso =
-                        List.map
-                          (function
-                            | 49836l(*mirage_pen*), subopts ->
-                                ( mirage_pen,
-                                  List.filter
-                                    (function 1, _ -> false | _ -> true)
-                                    subopts )
-                            | x -> x)
-                          vivso
-                      in
-                      Dhcp_wire.Vi_vendor_info vivso
-                  | opt -> opt)
-                options'
-            in
+            let options' = strip_mirage_certify options' in
             Lwt.return (Ok (options' @ new_options))
   end
 
