@@ -546,12 +546,12 @@ let eq_domain a b =
   Domain_name.equal (fst a) (fst b)
   &&
   let eq a b =
-  match a, b with
-  | `Interface a, `Interface b -> String.equal a b
-  | `Ip a, `Ip b -> Ipaddr.V4.Prefix.compare a b = 0
-  | `Ip_range (a1, a2), `Ip_range (b1, b2) ->
-      Ipaddr.V4.compare a1 b1 = 0 && Ipaddr.V4.compare a2 b2 = 0
-  | _ -> false
+    match (a, b) with
+    | `Interface a, `Interface b -> String.equal a b
+    | `Ip a, `Ip b -> Ipaddr.V4.Prefix.compare a b = 0
+    | `Ip_range (a1, a2), `Ip_range (b1, b2) ->
+        Ipaddr.V4.compare a1 b1 = 0 && Ipaddr.V4.compare a2 b2 = 0
+    | _ -> false
   in
   opt_eq eq (snd a) (snd b)
 
