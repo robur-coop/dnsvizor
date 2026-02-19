@@ -9,6 +9,7 @@ type dhcp_range = {
 
 val dhcp_range : unit Angstrom.t -> dhcp_range Angstrom.t
 val pp_dhcp_range : dhcp_range Fmt.t
+val eq_dhcp_range : dhcp_range -> dhcp_range -> bool
 val dhcp_range_docv : string
 val dhcp_range_c : dhcp_range Cmdliner.Arg.conv
 
@@ -27,6 +28,7 @@ type dhcp_host = {
 
 val dhcp_host : unit Angstrom.t -> dhcp_host Angstrom.t
 val pp_dhcp_host : dhcp_host Fmt.t
+val eq_dhcp_host : dhcp_host -> dhcp_host -> bool
 val dhcp_host_docv : string
 val dhcp_host_c : dhcp_host Cmdliner.Arg.conv
 
@@ -38,6 +40,7 @@ type dhcp_option = {
 
 val dhcp_option : unit Angstrom.t -> dhcp_option Angstrom.t
 val pp_dhcp_option : dhcp_option Fmt.t
+val eq_dhcp_option : dhcp_option -> dhcp_option -> bool
 val dhcp_option_docv : string
 val dhcp_option_c : dhcp_option Cmdliner.Arg.conv
 
@@ -50,8 +53,10 @@ type domain =
 
 val domain : unit Angstrom.t -> domain Angstrom.t
 val pp_domain : domain Fmt.t
+val eq_domain : domain -> domain -> bool
 val domain_docv : string
 val domain_c : domain Cmdliner.Arg.conv
+
 val ignore_c : string -> string Cmdliner.Arg.conv
 
 type config =
@@ -66,6 +71,7 @@ type config =
   list
 
 val pp_config : [ `File | `Arg ] -> config Fmt.t
+val eq_config : config -> config -> bool
 val parse_file : string -> (config, [> `Msg of string ]) result
 val arg_end_of_directive : unit Angstrom.t
 val parse_one : 'a Angstrom.t -> string -> ('a, [> `Msg of string ]) result

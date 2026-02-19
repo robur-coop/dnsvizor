@@ -4,52 +4,11 @@ let msg_t =
   let pp ppf (`Msg s) = Fmt.string ppf s in
   Alcotest.testable pp (fun (`Msg a) (`Msg b) -> String.equal a b)
 
-let opt_eq f a b =
-  match (a, b) with
-  | None, None -> true
-  | Some a, Some b -> f a b
-  | None, Some _ | Some _, None -> false
-
-let ipv4_eq a b = Ipaddr.V4.compare a b = 0
-let ipv6_eq a b = Ipaddr.V6.compare a b = 0
-let mac_eq a b = Macaddr.compare a b = 0
-
-let mode_eq a b =
-  match (a, b) with
-  | `Static, `Static | `Proxy, `Proxy -> true
-  | `Static, _ | `Proxy, _ -> false
-
 let dhcp_range_t =
-  let equal a b =
-    ipv4_eq a.start_addr b.start_addr
-    && opt_eq ipv4_eq a.end_addr b.end_addr
-    && opt_eq mode_eq a.mode b.mode
-    && opt_eq ipv4_eq a.netmask b.netmask
-    && opt_eq ipv4_eq a.broadcast b.broadcast
-    && opt_eq Int.equal a.lease_time b.lease_time
-  in
-  Alcotest.testable pp_dhcp_range equal
+  Alcotest.testable pp_dhcp_range eq_dhcp_range
 
 let dhcp_host_t =
-  let equal
-      { id; sets; tags; macs; ipv4; ipv6; lease_time; ignore; domain_name } b =
-    Option.equal
-      (fun id id' ->
-        match (id, id') with
-        | `Any_client_id, `Any_client_id -> true
-        | `Client_id id, `Client_id id' -> String.equal id id'
-        | `Any_client_id, `Client_id _ | `Client_id _, `Any_client_id -> false)
-      id b.id
-    && List.equal String.equal sets b.sets
-    && List.equal String.equal tags b.tags
-    && List.equal mac_eq macs b.macs
-    && Option.equal ipv4_eq ipv4 b.ipv4
-    && Option.equal ipv6_eq ipv6 b.ipv6
-    && Option.equal Int.equal lease_time b.lease_time
-    && Bool.equal ignore b.ignore
-    && Option.equal Domain_name.equal domain_name b.domain_name
-  in
-  Alcotest.testable pp_dhcp_host equal
+  Alcotest.testable pp_dhcp_host eq_dhcp_host
 
 let parse_one_arg rule input = parse_one (rule arg_end_of_directive) input
 
@@ -257,19 +216,7 @@ let ok_dhcp_host_dnsmasq_conf_example =
     ]
 
 let domain_t =
-  let equal (da, ipa) (db, ipb) =
-    Domain_name.equal da db
-    && opt_eq
-         (fun a b ->
-           match (a, b) with
-           | `Interface a, `Interface b -> String.equal a b
-           | `Ip a, `Ip b -> Ipaddr.V4.Prefix.compare a b = 0
-           | `Ip_range (sa, ea), `Ip_range (sb, eb) ->
-               ipv4_eq sa sb && ipv4_eq ea eb
-           | _ -> false)
-         ipa ipb
-  in
-  Alcotest.testable pp_domain equal
+  Alcotest.testable pp_domain eq_domain
 
 let ok_domain () =
   let input = "home.lan" in
@@ -356,13 +303,12 @@ let string_of_file filename =
     content
   with _ -> Alcotest.failf "Error reading file %S" file
 
+let config_t =
+  Alcotest.testable (pp_config `File) eq_config
+
 let test_configuration config file () =
-  match parse_file (string_of_file file) with
-  | Error (`Msg msg) -> Alcotest.failf "Error parsing %S: %s" file msg
-  | Ok data ->
-      Alcotest.(check int)
-        "Number of configuration items matches" (List.length config)
-        (List.length data)
+  Alcotest.(check (result config_t msg_t) "DHCP configuration is good" (Ok config)
+      (parse_file (string_of_file file)))
 
 let dhcp_option_conf =
   [
