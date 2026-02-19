@@ -4,8 +4,42 @@ let msg_t =
   let pp ppf (`Msg s) = Fmt.string ppf s in
   Alcotest.testable pp (fun (`Msg a) (`Msg b) -> String.equal a b)
 
+let eq_ipv4 a b = Ipaddr.V4.compare a b = 0
+let eq_ipv6 a b = Ipaddr.V6.compare a b = 0
+
+let eq_dhcp_range a b =
+  let eq_mode a b =
+    match (a, b) with `Static, `Static | `Proxy, `Proxy -> true | _ -> false
+  in
+  eq_ipv4 a.start_addr b.start_addr
+  && Option.equal eq_ipv4 a.end_addr b.end_addr
+  && Option.equal eq_mode a.mode b.mode
+  && Option.equal eq_ipv4 a.netmask b.netmask
+  && Option.equal eq_ipv4 a.broadcast b.broadcast
+  && Option.equal Int.equal a.lease_time b.lease_time
+
 let dhcp_range_t = Alcotest.testable pp_dhcp_range eq_dhcp_range
+
+let eq_dhcp_host a b =
+  let eq_id a b =
+    match (a, b) with
+    | `Any_client_id, `Any_client_id -> true
+    | `Client_id a, `Client_id b -> String.equal a b
+    | _ -> false
+  in
+  let eq_mac a b = Macaddr.compare a b = 0 in
+  Option.equal eq_id a.id b.id
+  && List.equal String.equal a.sets b.sets
+  && List.equal String.equal a.tags b.tags
+  && List.equal eq_mac a.macs b.macs
+  && Option.equal eq_ipv4 a.ipv4 b.ipv4
+  && Option.equal eq_ipv6 a.ipv6 b.ipv6
+  && Option.equal Int.equal a.lease_time b.lease_time
+  && a.ignore = b.ignore
+  && Option.equal Domain_name.equal a.domain_name b.domain_name
+
 let dhcp_host_t = Alcotest.testable pp_dhcp_host eq_dhcp_host
+
 let parse_one_arg rule input = parse_one (rule arg_end_of_directive) input
 
 let ok_dhcp_range () =
@@ -211,6 +245,19 @@ let ok_dhcp_host_dnsmasq_conf_example =
       *)
     ]
 
+let eq_domain a b =
+  Domain_name.equal (fst a) (fst b)
+  &&
+  let eq a b =
+    match (a, b) with
+    | `Interface a, `Interface b -> String.equal a b
+    | `Ip a, `Ip b -> Ipaddr.V4.Prefix.compare a b = 0
+    | `Ip_range (a1, a2), `Ip_range (b1, b2) ->
+        Ipaddr.V4.compare a1 b1 = 0 && Ipaddr.V4.compare a2 b2 = 0
+    | _ -> false
+  in
+  Option.equal eq (snd a) (snd b)
+
 let domain_t = Alcotest.testable pp_domain eq_domain
 
 let ok_domain () =
@@ -243,15 +290,18 @@ let ok_domain3 () =
     check (result domain_t msg_t) "Domain is good" (Ok expected)
       (parse_one_arg domain input))
 
+let eq_dhcp_option a b =
+  List.equal String.equal a.tags b.tags
+  && (match (a.vendor, b.vendor) with
+    | None, None -> true
+    | Some a, Some b -> String.equal a b
+    | _ -> false)
+  && String.equal
+       (Dhcp_wire.dhcp_option_to_string a.option)
+       (Dhcp_wire.dhcp_option_to_string b.option)
+
 let option_t =
-  let equal a b =
-    List.for_all2 String.equal a.tags b.tags
-    && Option.equal String.equal a.vendor b.vendor
-    && String.equal
-         (Dhcp_wire.dhcp_option_to_string a.option)
-         (Dhcp_wire.dhcp_option_to_string b.option)
-  in
-  Alcotest.testable pp_dhcp_option equal
+  Alcotest.testable pp_dhcp_option eq_dhcp_option
 
 let ok_router () =
   let input = "3,192.168.4.4" in
@@ -298,6 +348,19 @@ let string_of_file filename =
     content
   with _ -> Alcotest.failf "Error reading file %S" file
 
+
+let eq_config_item a b =
+  match (a, b) with
+  | `No_hosts, `No_hosts | `Dnssec, `Dnssec | `Bogus_priv, `Bogus_priv | `Ignored, `Ignored -> true
+  | `Dhcp_range a, `Dhcp_range b -> eq_dhcp_range a b
+  | `Dhcp_host a, `Dhcp_host b -> eq_dhcp_host a b
+  | `Domain a, `Domain b -> eq_domain a b
+  | `Dhcp_option a, `Dhcp_option b -> eq_dhcp_option a b
+  | _ -> false
+
+let eq_config a b =
+  List.equal eq_config_item a b
+
 let config_t = Alcotest.testable (pp_config `File) eq_config
 
 let test_configuration config file () =
@@ -324,6 +387,7 @@ let dhcp_option_conf =
 let carpie_conf =
   [
     `Bogus_priv;
+    `Domain (Domain_name.of_string_exn "home.lan", None);
     `Dhcp_range
       {
         start_addr = Ipaddr.V4.of_string_exn "192.168.0.10";
@@ -368,7 +432,6 @@ let carpie_conf =
          ~domain_name:(Domain_name.of_string_exn "satellite5")
          ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.32")
          ());
-    `Domain (Domain_name.of_string_exn "home.lan", None);
   ]
 
 let netbeez_conf =
@@ -398,15 +461,14 @@ let netbeez_conf =
 
 let bug_124_conf =
   [
-    `Dhcp_range
-      {
-        start_addr = Ipaddr.V4.of_string_exn "10.99.0.100";
-        end_addr = Some (Ipaddr.V4.of_string_exn "10.99.0.200");
-        mode = None;
-        netmask = None;
-        broadcast = None;
-        lease_time = Some (3 * 60);
-      };
+    `Domain (Domain_name.of_string_exn "testnet.lan", None);
+    `Dhcp_host
+      (make_dhcp_host
+         ~macs:[ Macaddr.of_string_exn "00:a0:98:f9:11:89" ]
+         ~domain_name:(Domain_name.of_string_exn "something")
+         ~ipv4:(Ipaddr.V4.of_string_exn "10.99.0.10")
+         ());
+    `Bogus_priv;
     `Dhcp_option
       {
         tags = [];
@@ -419,14 +481,15 @@ let bug_124_conf =
         vendor = None;
         option = Dhcp_wire.Dns_servers [ Ipaddr.V4.of_string_exn "10.99.0.2" ];
       };
-    `Bogus_priv;
-    `Dhcp_host
-      (make_dhcp_host
-         ~macs:[ Macaddr.of_string_exn "00:a0:98:f9:11:89" ]
-         ~domain_name:(Domain_name.of_string_exn "something")
-         ~ipv4:(Ipaddr.V4.of_string_exn "10.99.0.10")
-         ());
-    `Domain (Domain_name.of_string_exn "testnet.lan", None);
+    `Dhcp_range
+      {
+        start_addr = Ipaddr.V4.of_string_exn "10.99.0.100";
+        end_addr = Some (Ipaddr.V4.of_string_exn "10.99.0.200");
+        mode = None;
+        netmask = None;
+        broadcast = None;
+        lease_time = Some (3 * 60);
+      };
   ]
 
 let config_file_tests =
