@@ -478,14 +478,14 @@ let bug_124_conf =
         vendor = None;
         option = Dhcp_wire.Dns_servers [ Ipaddr.V4.of_string_exn "10.99.0.2" ];
       };
-    `Bogus_priv ;
+    `Bogus_priv;
     `Dhcp_host
       (make_dhcp_host
          ~macs:[ Macaddr.of_string_exn "00:a0:98:f9:11:89" ]
          ~domain_name:(Domain_name.of_string_exn "something")
          ~ipv4:(Ipaddr.V4.of_string_exn "10.99.0.10")
          ());
-    `Domain (Domain_name.of_string_exn "testnet.lan", None)
+    `Domain (Domain_name.of_string_exn "testnet.lan", None);
   ]
 
 let config_file_tests =
@@ -503,9 +503,7 @@ let config_file_tests =
     ( "netbeez configuration",
       `Quick,
       test_configuration netbeez_conf "netbeez.conf" );
-    ( "issue 124",
-      `Quick,
-      test_configuration bug_124_conf "bug-124.conf" );
+    ("issue 124", `Quick, test_configuration bug_124_conf "bug-124.conf");
   ]
 
 let tests =
