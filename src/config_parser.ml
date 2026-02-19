@@ -507,7 +507,7 @@ let pp_domain ppf (domain, ip_or_interface) =
        ip_or_interface)
 
 let domain end_of_directive =
-  ( take_while1 (function ',' -> false | _ -> true) >>= fun name ->
+  ( take_while1 (function ',' | '\n' -> false | _ -> true) >>= fun name ->
     match Domain_name.of_string name with
     | Ok domain -> return domain
     | Error (`Msg e) -> fail (Fmt.str "Invalid domain: %s: %S" e name) )

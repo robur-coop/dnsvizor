@@ -427,6 +427,7 @@ let carpie_conf =
          ~domain_name:(Domain_name.of_string_exn "satellite5")
          ~ipv4:(Ipaddr.V4.of_string_exn "192.168.0.32")
          ());
+    `Domain (Domain_name.of_string_exn "home.lan", None);
   ]
 
 let netbeez_conf =
@@ -454,6 +455,39 @@ let netbeez_conf =
       };
   ]
 
+let bug_124_conf =
+  [
+    `Dhcp_range
+      {
+        start_addr = Ipaddr.V4.of_string_exn "10.99.0.100";
+        end_addr = Some (Ipaddr.V4.of_string_exn "10.99.0.200");
+        mode = None;
+        netmask = None;
+        broadcast = None;
+        lease_time = Some (3 * 60);
+      };
+    `Dhcp_option
+      {
+        tags = [];
+        vendor = None;
+        option = Dhcp_wire.Routers [ Ipaddr.V4.of_string_exn "10.99.0.1" ];
+      };
+    `Dhcp_option
+      {
+        tags = [];
+        vendor = None;
+        option = Dhcp_wire.Dns_servers [ Ipaddr.V4.of_string_exn "10.99.0.2" ];
+      };
+    `Bogus_priv ;
+    `Dhcp_host
+      (make_dhcp_host
+         ~macs:[ Macaddr.of_string_exn "00:a0:98:f9:11:89" ]
+         ~domain_name:(Domain_name.of_string_exn "something")
+         ~ipv4:(Ipaddr.V4.of_string_exn "10.99.0.10")
+         ());
+    `Domain (Domain_name.of_string_exn "testnet.lan", None)
+  ]
+
 let config_file_tests =
   [
     ("First example", `Quick, test_configuration [] "simple.conf");
@@ -469,6 +503,9 @@ let config_file_tests =
     ( "netbeez configuration",
       `Quick,
       test_configuration netbeez_conf "netbeez.conf" );
+    ( "issue 124",
+      `Quick,
+      test_configuration bug_124_conf "bug-124.conf" );
   ]
 
 let tests =
