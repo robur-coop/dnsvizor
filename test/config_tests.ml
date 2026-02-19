@@ -39,7 +39,6 @@ let eq_dhcp_host a b =
   && Option.equal Domain_name.equal a.domain_name b.domain_name
 
 let dhcp_host_t = Alcotest.testable pp_dhcp_host eq_dhcp_host
-
 let parse_one_arg rule input = parse_one (rule arg_end_of_directive) input
 
 let ok_dhcp_range () =
@@ -300,8 +299,7 @@ let eq_dhcp_option a b =
        (Dhcp_wire.dhcp_option_to_string a.option)
        (Dhcp_wire.dhcp_option_to_string b.option)
 
-let option_t =
-  Alcotest.testable pp_dhcp_option eq_dhcp_option
+let option_t = Alcotest.testable pp_dhcp_option eq_dhcp_option
 
 let ok_router () =
   let input = "3,192.168.4.4" in
@@ -348,19 +346,20 @@ let string_of_file filename =
     content
   with _ -> Alcotest.failf "Error reading file %S" file
 
-
 let eq_config_item a b =
   match (a, b) with
-  | `No_hosts, `No_hosts | `Dnssec, `Dnssec | `Bogus_priv, `Bogus_priv | `Ignored, `Ignored -> true
+  | `No_hosts, `No_hosts
+  | `Dnssec, `Dnssec
+  | `Bogus_priv, `Bogus_priv
+  | `Ignored, `Ignored ->
+      true
   | `Dhcp_range a, `Dhcp_range b -> eq_dhcp_range a b
   | `Dhcp_host a, `Dhcp_host b -> eq_dhcp_host a b
   | `Domain a, `Domain b -> eq_domain a b
   | `Dhcp_option a, `Dhcp_option b -> eq_dhcp_option a b
   | _ -> false
 
-let eq_config a b =
-  List.equal eq_config_item a b
-
+let eq_config a b = List.equal eq_config_item a b
 let config_t = Alcotest.testable (pp_config `File) eq_config
 
 let test_configuration config file () =
