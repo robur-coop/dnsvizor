@@ -1,5 +1,8 @@
 open Lwt.Infix
 
+(* 49836 is MirageOS private enterprise number *)
+let mirage_pen = 49836l
+
 module CA = struct
   let prefix =
     X509.Distinguished_name.
@@ -382,8 +385,7 @@ module K = struct
     and+ vivso = Dhcp_ext.mirage_vivso in
     let metrics_sink_default, metrics_sinks =
       let option sink =
-        (* 49836 is MirageOS private enterprise number *)
-        Dhcp_wire.Vi_vendor_info [ (49836l, [ (0, sink) ]) ]
+        Dhcp_wire.Vi_vendor_info [ (mirage_pen, [ (0, sink) ]) ]
       in
       (* It seems [Dhcp_server.Config.hostname] isn't actually used so we can
          put anything there. *)
@@ -402,7 +404,7 @@ module K = struct
     in
     let default_vivso, vivso =
       let option code data =
-        Dhcp_wire.Vi_vendor_info [ (49836l, [ (code, data) ]) ]
+        Dhcp_wire.Vi_vendor_info [ (mirage_pen, [ (code, data) ]) ]
       in
       List.partition_map
         (function
@@ -856,7 +858,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     let mirage_default_options, mirage_hosts = K.mirage_dhcp () in
     let certify_hosts =
       (* The empty string is a dummy value that will be replaced in dhcp_lease_cb *)
-      let option = Dhcp_wire.Vi_vendor_info [ (49836l, [ (1, "") ]) ] in
+      let option = Dhcp_wire.Vi_vendor_info [ (mirage_pen, [ (1, "") ]) ] in
       List.map
         (fun hw_addr ->
           {
@@ -2063,8 +2065,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     let vivso =
                       List.map
                         (function
-                          | 49836l, subopts ->
-                              ( 49836l,
+                          | 49836l (*mirage_pen*), subopts ->
+                              ( mirage_pen,
                                 List.filter
                                   (function 1, _ -> false | _ -> true)
                                   subopts )
@@ -2079,7 +2081,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | Some hostname, new_options ->
           if List.mem pkt.Dhcp_wire.chaddr (K.mirage_certify ()) then
             match
-              Dhcp_wire.collect_vi_vendor_class options |> List.assoc_opt 49836l
+              Dhcp_wire.collect_vi_vendor_class options |> List.assoc_opt mirage_pen
             with
             | None ->
                 (* As the client is not in the list we don't need to strip *)
@@ -2118,8 +2120,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                                   let vivso =
                                     List.map
                                       (function
-                                        | 49836l, subopts ->
-                                            ( 49836l,
+                                        | 49836l(*mirage_pen*), subopts ->
+                                            ( mirage_pen,
                                               List.filter_map
                                                 (function
                                                   | 1, _ ->
@@ -2145,8 +2147,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       let vivso =
                         List.map
                           (function
-                            | 49836l, subopts ->
-                                ( 49836l,
+                            | 49836l(*mirage_pen*), subopts ->
+                                ( mirage_pen,
                                   List.filter
                                     (function 1, _ -> false | _ -> true)
                                     subopts )
