@@ -755,6 +755,52 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     List.find_opt (fun src -> Metrics.Src.name src = name) (Metrics.Src.list ())
 
   module Daemon (Resolver : Dns_resolver_mirage_shared.S) = struct
+    let update_dns_for_dhcp_hosts (t : t) domain resolver =
+      match domain with
+      | None -> ()
+      | Some domain ->
+          let trie =
+            List.fold_left
+              (fun trie (host : Dhcp_server.Config.host) ->
+                match
+                  ( Domain_name.prepend_label domain host.hostname,
+                    host.fixed_addr )
+                with
+                | Ok fqdn, Some ip -> (
+                    Logs.info (fun m ->
+                        m "recording %a to %a" Domain_name.pp fqdn Ipaddr.V4.pp
+                          ip);
+                    let a_record = (3600l, Ipaddr.V4.Set.singleton ip) in
+                    let trie =
+                      Dns_trie.insert fqdn Dns.Rr_map.A a_record trie
+                    in
+                    let ptr_name = Ipaddr.V4.to_domain_name ip in
+                    match Domain_name.host fqdn with
+                    | Ok host ->
+                        let ptr_record = (3600l, host) in
+                        Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie
+                    | Error (`Msg msg) ->
+                        Logs.warn (fun m ->
+                            m "couldn't construct a host name from %a: %S"
+                              Domain_name.pp fqdn msg);
+                        trie)
+                | Error (`Msg msg), _ ->
+                    Logs.warn (fun m ->
+                        m "couldn't construct a domain name from %S and %a: %s"
+                          host.hostname Domain_name.pp domain msg);
+                    trie
+                | Ok fqdn, None ->
+                    Logs.warn (fun m ->
+                        m "No address recorded for %a, thus no DNS record"
+                          Domain_name.pp fqdn);
+                    trie)
+              (Resolver.primary_data resolver)
+              (match t.net.Net.config with
+              | Some dhcp -> dhcp.Dhcp_server.Config.hosts
+              | None -> [])
+          in
+          Resolver.update_primary_data resolver trie
+
     let pp_error ppf = function
       | `Bad_gateway -> Fmt.string ppf "Bad gateway"
       | `Bad_request -> Fmt.string ppf "Bad request"
@@ -991,7 +1037,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     (Dnsvizor.Config_parser.parse_file config_data)
                     (update_configuration t config_data)
                 with
-                | Ok (_domain, _no_hosts, _dnssec, _bogus_priv) ->
+                | Ok (domain, _no_hosts, _dnssec, _bogus_priv) ->
+                    update_dns_for_dhcp_hosts t domain resolver;
                     (* TODO: handle domain, no_hosts, dnssec, bogus_priv *)
                     Logs.info (fun m -> m "Dnsmasq config parsed correctly");
                     Some (`Redirect ("/configuration", None))
@@ -1930,6 +1977,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               let resolver = Resolver.resolver stack ~root:true resolver in
               net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
               let t = { net; mac; configuration } in
+              Daemon.update_dns_for_dhcp_hosts t domain resolver;
               Lwt.async (fun () ->
                   Daemon.start_resolver t resolver stack tcp http_client js_file
                     password);
@@ -1954,6 +2002,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                 >>= fun resolver ->
                 net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
                 let t = { net; mac; configuration } in
+                Daemon.update_dns_for_dhcp_hosts t domain resolver;
                 Lwt.async (fun () ->
                     Daemon.start_resolver t resolver stack tcp http_client
                       js_file password);
