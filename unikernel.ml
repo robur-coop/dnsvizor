@@ -2009,20 +2009,22 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         List.filter_map
           (function
             | Dhcp_wire.Vi_vendor_info vivso ->
-              let vivso =
-                List.filter_map
-                  (function
-                    | 49836l(*mirage_pen*), subopts ->
-                      let subopts =
-                        List.filter (function 1, _ -> false | _ -> true) subopts
-                      in
-                      if subopts = [] then
-                        None
-                      else Some (mirage_pen, subopts)
-                    | x -> Some x)
-                  vivso
-              in
-              if vivso = [] then None else Some (Dhcp_wire.Vi_vendor_info vivso)
+                let vivso =
+                  List.filter_map
+                    (function
+                      | 49836l (*mirage_pen*), subopts ->
+                          let subopts =
+                            List.filter
+                              (function 1, _ -> false | _ -> true)
+                              subopts
+                          in
+                          if subopts = [] then None
+                          else Some (mirage_pen, subopts)
+                      | x -> Some x)
+                    vivso
+                in
+                if vivso = [] then None
+                else Some (Dhcp_wire.Vi_vendor_info vivso)
             | opt -> Some opt)
           options
       in
@@ -2083,7 +2085,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | Some hostname, new_options ->
           if List.mem pkt.Dhcp_wire.chaddr (K.mirage_certify ()) then
             match
-              Dhcp_wire.collect_vi_vendor_class options |> List.assoc_opt mirage_pen
+              Dhcp_wire.collect_vi_vendor_class options
+              |> List.assoc_opt mirage_pen
             with
             | None ->
                 (* As the client is not in the list we don't need to strip *)
@@ -2122,7 +2125,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                                   let vivso =
                                     List.map
                                       (function
-                                        | 49836l(*mirage_pen*), subopts ->
+                                        | 49836l (*mirage_pen*), subopts ->
                                             ( mirage_pen,
                                               List.filter_map
                                                 (function
