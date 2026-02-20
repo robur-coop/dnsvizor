@@ -1,6 +1,7 @@
 (test
  (name config_tests)
  (modules config_tests)
+ (package dnsvizor)
  (libraries alcotest fmt logs.fmt dnsvizor)
  (deps
   (source_tree sample-configuration-files)))
