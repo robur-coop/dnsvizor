@@ -19,5 +19,6 @@ depends: [
   "dune" {>= "2.9"}
   "ocaml" {>= "4.14.0"}
   "odoc" {with-doc}
-  "x509"
+  "x509" {>= "1.0.0"}
+  "ipaddr"
 ]
