@@ -858,7 +858,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     List.find_opt (fun src -> Metrics.Src.name src = name) (Metrics.Src.list ())
 
   module Daemon (Resolver : Dns_resolver_mirage_shared.S) = struct
-    let update_dns_for_dhcp_hosts (t : t) domain resolver no_hosts =
+    let update_dns_for_static_hosts (t : t) domain resolver no_hosts =
       let trie = Resolver.primary_data resolver in
       let trie, changed =
         if Option.equal Domain_name.equal t.domain domain then (trie, false)
@@ -1147,7 +1147,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     (update_configuration t config_data)
                 with
                 | Ok (domain, no_hosts, _dnssec, _bogus_priv) ->
-                    update_dns_for_dhcp_hosts t domain resolver no_hosts;
+                    update_dns_for_static_hosts t domain resolver no_hosts;
                     (* TODO: handle domain, no_hosts, dnssec, bogus_priv *)
                     Logs.info (fun m -> m "Dnsmasq config parsed correctly");
                     Some (`Redirect ("/configuration", None))
@@ -2018,7 +2018,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               let resolver = Resolver.resolver stack ~root:true resolver in
               net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
-              Daemon.update_dns_for_dhcp_hosts t domain resolver no_hosts;
+              Daemon.update_dns_for_static_hosts t domain resolver no_hosts;
               Lwt.async (fun () ->
                   Daemon.start_resolver t resolver stack tcp http_client js_file
                     password);
@@ -2042,7 +2042,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   ~nameservers:[ ns ] primary_t ~happy_eyeballs stack
                 >>= fun resolver ->
                 net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
-                Daemon.update_dns_for_dhcp_hosts t domain resolver no_hosts;
+                Daemon.update_dns_for_static_hosts t domain resolver no_hosts;
                 Lwt.async (fun () ->
                     Daemon.start_resolver t resolver stack tcp http_client
                       js_file password);
