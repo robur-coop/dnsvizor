@@ -858,7 +858,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     List.find_opt (fun src -> Metrics.Src.name src = name) (Metrics.Src.list ())
 
   module Daemon (Resolver : Dns_resolver_mirage_shared.S) = struct
-    let update_dns_for_dhcp_hosts (t : t) domain resolver =
+    let update_dns_for_dhcp_hosts (t : t) domain resolver no_hosts =
       let trie = Resolver.primary_data resolver in
       let trie, changed =
         if Option.equal Domain_name.equal t.domain domain then (trie, false)
@@ -896,7 +896,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           trie hosts
       in
       let trie =
-        if changed then
+        if changed && not no_hosts then
           List.fold_left
             (fun trie ip ->
               insert_dns_records trie
@@ -1146,8 +1146,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     (Dnsvizor.Config_parser.parse_file config_data)
                     (update_configuration t config_data)
                 with
-                | Ok (domain, _no_hosts, _dnssec, _bogus_priv) ->
-                    update_dns_for_dhcp_hosts t domain resolver;
+                | Ok (domain, no_hosts, _dnssec, _bogus_priv) ->
+                    update_dns_for_dhcp_hosts t domain resolver no_hosts;
                     (* TODO: handle domain, no_hosts, dnssec, bogus_priv *)
                     Logs.info (fun m -> m "Dnsmasq config parsed correctly");
                     Some (`Redirect ("/configuration", None))
@@ -1963,19 +1963,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       used_metrics;
     let primary_t =
       (* setup DNS server state: *)
-      let trie =
-        let trie = insert_dns_soa Dns_trie.empty domain in
-        let trie = insert_dns_rev_soa trie (S.IP.configured_ips ip) in
-        if no_hosts then trie
-        else
-          List.fold_left
-            (fun trie ip ->
-              insert_dns_records trie
-                (Domain_name.to_string (K.hostname ()))
-                domain ip)
-            trie
-            (List.map Ipaddr.Prefix.address (S.IP.configured_ips ip))
-      in
+      let trie = insert_dns_rev_soa Dns_trie.empty (S.IP.configured_ips ip) in
       let trie =
         List.fold_left
           (Blocklist.add_single_block "boot-parameter")
@@ -2009,7 +1997,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     | Ok js_file ->
         let qname_min = K.qname_minimisation ()
         and opportunistic = K.opportunistic_tls () in
-        let t = { net; mac; ip; domain; hosts = []; configuration } in
+        let t = { net; mac; ip; domain = None; hosts = []; configuration } in
         (match K.dns_upstream () with
           | None ->
               Logs.info (fun m -> m "using a recursive resolver");
@@ -2030,7 +2018,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               let resolver = Resolver.resolver stack ~root:true resolver in
               net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
-              Daemon.update_dns_for_dhcp_hosts t domain resolver;
+              Daemon.update_dns_for_dhcp_hosts t domain resolver no_hosts;
               Lwt.async (fun () ->
                   Daemon.start_resolver t resolver stack tcp http_client js_file
                     password);
@@ -2054,7 +2042,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   ~nameservers:[ ns ] primary_t ~happy_eyeballs stack
                 >>= fun resolver ->
                 net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
-                Daemon.update_dns_for_dhcp_hosts t domain resolver;
+                Daemon.update_dns_for_dhcp_hosts t domain resolver no_hosts;
                 Lwt.async (fun () ->
                     Daemon.start_resolver t resolver stack tcp http_client
                       js_file password);
