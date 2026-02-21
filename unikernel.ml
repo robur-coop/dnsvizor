@@ -521,6 +521,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   type t = {
     net : Net.t;
     mac : Macaddr.t;
+    ip : IPV4V6.t;
     mutable domain : [ `raw ] Domain_name.t option;
     mutable hosts : Dhcp_server.Config.host list;
     mutable configuration : string;
@@ -893,6 +894,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   trie)
             else trie)
           trie hosts
+      in
+      let trie =
+        if changed then
+          List.fold_left
+            (fun trie ip ->
+              insert_dns_records trie
+                (Domain_name.to_string (K.hostname ()))
+                domain ip)
+            trie
+            (List.map Ipaddr.Prefix.address (S.IP.configured_ips t.ip))
+        else trie
       in
       t.domain <- domain;
       t.hosts <- hosts;
@@ -1997,6 +2009,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     | Ok js_file ->
         let qname_min = K.qname_minimisation ()
         and opportunistic = K.opportunistic_tls () in
+        let t = { net; mac; ip; domain; hosts = []; configuration } in
         (match K.dns_upstream () with
           | None ->
               Logs.info (fun m -> m "using a recursive resolver");
@@ -2017,7 +2030,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               let resolver = Resolver.resolver stack ~root:true resolver in
               net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
-              let t = { net; mac; domain; hosts = []; configuration } in
               Daemon.update_dns_for_dhcp_hosts t domain resolver;
               Lwt.async (fun () ->
                   Daemon.start_resolver t resolver stack tcp http_client js_file
@@ -2042,7 +2054,6 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   ~nameservers:[ ns ] primary_t ~happy_eyeballs stack
                 >>= fun resolver ->
                 net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
-                let t = { net; mac; domain; hosts = []; configuration } in
                 Daemon.update_dns_for_dhcp_hosts t domain resolver;
                 Lwt.async (fun () ->
                     Daemon.start_resolver t resolver stack tcp http_client
