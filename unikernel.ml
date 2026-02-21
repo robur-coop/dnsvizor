@@ -751,55 +751,59 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     t.net.config <- Some dhcp_configuration;
     (domain, no_hosts, dnssec, bogus_priv)
 
+  let insert_dns_records trie name domain ip =
+    match domain with
+    | Some domain -> (
+        match Domain_name.prepend_label domain name with
+        | Ok fqdn ->
+            Logs.info (fun m ->
+                m "recording %a to %a" Domain_name.pp fqdn Ipaddr.V4.pp ip);
+            let a_record = (3600l, Ipaddr.V4.Set.singleton ip) in
+            let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
+            let trie =
+              match Domain_name.host fqdn with
+              | Ok host ->
+                  let ptr_record = (3600l, host) in
+                  let ptr_name = Ipaddr.V4.to_domain_name ip in
+                  Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie
+              | Error (`Msg msg) ->
+                  Logs.warn (fun m ->
+                      m "couldn't construct a host name from %a: %S"
+                        Domain_name.pp fqdn msg);
+                  trie
+            in
+            trie
+        | Error (`Msg msg) ->
+            Logs.warn (fun m ->
+                m "couldn't construct a domain name from %S and %a: %s" name
+                  Domain_name.pp domain msg);
+            trie)
+    | None ->
+        Logs.info (fun m ->
+            m "no domain provided (via --domain), not registering any names");
+        trie
+
   let lookup_src_by_name name =
     List.find_opt (fun src -> Metrics.Src.name src = name) (Metrics.Src.list ())
 
   module Daemon (Resolver : Dns_resolver_mirage_shared.S) = struct
     let update_dns_for_dhcp_hosts (t : t) domain resolver =
-      match domain with
-      | None -> ()
-      | Some domain ->
-          let trie =
-            List.fold_left
-              (fun trie (host : Dhcp_server.Config.host) ->
-                match
-                  ( Domain_name.prepend_label domain host.hostname,
-                    host.fixed_addr )
-                with
-                | Ok fqdn, Some ip -> (
-                    Logs.info (fun m ->
-                        m "recording %a to %a" Domain_name.pp fqdn Ipaddr.V4.pp
-                          ip);
-                    let a_record = (3600l, Ipaddr.V4.Set.singleton ip) in
-                    let trie =
-                      Dns_trie.insert fqdn Dns.Rr_map.A a_record trie
-                    in
-                    let ptr_name = Ipaddr.V4.to_domain_name ip in
-                    match Domain_name.host fqdn with
-                    | Ok host ->
-                        let ptr_record = (3600l, host) in
-                        Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie
-                    | Error (`Msg msg) ->
-                        Logs.warn (fun m ->
-                            m "couldn't construct a host name from %a: %S"
-                              Domain_name.pp fqdn msg);
-                        trie)
-                | Error (`Msg msg), _ ->
-                    Logs.warn (fun m ->
-                        m "couldn't construct a domain name from %S and %a: %s"
-                          host.hostname Domain_name.pp domain msg);
-                    trie
-                | Ok fqdn, None ->
-                    Logs.warn (fun m ->
-                        m "No address recorded for %a, thus no DNS record"
-                          Domain_name.pp fqdn);
-                    trie)
-              (Resolver.primary_data resolver)
-              (match t.net.Net.config with
-              | Some dhcp -> dhcp.Dhcp_server.Config.hosts
-              | None -> [])
-          in
-          Resolver.update_primary_data resolver trie
+      let trie =
+        List.fold_left
+          (fun trie (host : Dhcp_server.Config.host) ->
+            match host.fixed_addr with
+            | Some ip -> insert_dns_records trie host.hostname domain ip
+            | None ->
+                Logs.warn (fun m ->
+                    m "No address recorded for %s, thus no DNS record"
+                      host.hostname);
+                trie)
+          (Resolver.primary_data resolver)
+          (match t.net.Net.config with
+          | Some dhcp -> dhcp.Dhcp_server.Config.hosts
+          | None -> [])
+      in
+      Resolver.update_primary_data resolver trie
 
     let pp_error ppf = function
       | `Bad_gateway -> Fmt.string ppf "Bad gateway"
@@ -1764,47 +1768,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
 
     let dhcp_lease_cb tcp resolver domain lease options =
       (match
-         ( List.find_opt
-             (function Dhcp_wire.Hostname _ -> true | _ -> false)
-             options,
-           domain )
+         List.find_opt
+           (function Dhcp_wire.Hostname _ -> true | _ -> false)
+           options
        with
-      | Some (Hostname name), Some domain -> (
-          match Domain_name.prepend_label domain name with
-          | Ok fqdn ->
-              Logs.info (fun m -> m "recording %a" Domain_name.pp fqdn);
-              let ptr_name =
-                Ipaddr.V4.to_domain_name lease.Dhcp_server.Lease.addr
-              in
-              let trie = Resolver.primary_data resolver in
-              let a_record =
-                (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
-              in
-              let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
-              let trie =
-                match Domain_name.host fqdn with
-                | Ok host ->
-                    let ptr_record = (3600l, host) in
-                    Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie
-                | Error (`Msg msg) ->
-                    Logs.warn (fun m ->
-                        m "couldn't construct a host name from %a: %S"
-                          Domain_name.pp fqdn msg);
-                    trie
-              in
-              Resolver.update_primary_data resolver trie
-          | Error (`Msg msg) ->
-              Logs.warn (fun m ->
-                  m "couldn't construct a domain name from %S and %a: %s" name
-                    Domain_name.pp domain msg))
-      | None, _ ->
-          Logs.info (fun m -> m "no Hostname found in the DHCP request")
-      | _, None ->
-          Logs.info (fun m ->
-              m "no domain provided (via --domain), not registering any names")
-      | _ ->
-          Logs.info (fun m ->
-              m "no Hostname or nor domain found in the DHCP request"));
+      | Some (Hostname name) ->
+          let trie = Resolver.primary_data resolver in
+          let trie =
+            insert_dns_records trie name domain lease.Dhcp_server.Lease.addr
+          in
+          Resolver.update_primary_data resolver trie
+      | _ -> Logs.info (fun m -> m "no Hostname found in the DHCP request"));
       (match
          List.find_opt
            (function Dhcp_wire.Client_fqdn _ -> true | _ -> false)
