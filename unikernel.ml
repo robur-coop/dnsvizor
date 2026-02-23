@@ -1601,12 +1601,20 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                       | Ok query ->
                           let resolve () =
                             Resolver.resolve_external resolver (dst, port) query
-                            >>= fun (ttl, answer) ->
-                            reply ~content_type:"application/dns-message"
-                              ~headers:
-                                [ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
-                              reqd answer;
-                            Lwt.return_unit
+                            >>= function
+                            | `Data (ttl, answer) ->
+                                reply ~content_type:"application/dns-message"
+                                  ~headers:
+                                    [
+                                      ( "cache-control",
+                                        Fmt.str "max-age=%lu" ttl );
+                                    ]
+                                  reqd answer;
+                                Lwt.return_unit
+                            | `Close ->
+                                (* TODO: unclear what to do *)
+                                reply ~status:`Gateway_timeout reqd "";
+                                Lwt.return_unit
                           in
                           Lwt.async resolve
                       | Error (`Msg msg) ->
@@ -1620,12 +1628,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     when String.starts_with ~prefix:"/dns-query" path ->
                       let resolve () =
                         Resolver.resolve_external resolver (dst, port) data
-                        >>= fun (ttl, answer) ->
-                        reply ~content_type:"application/dns-message"
-                          ~headers:
-                            [ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
-                          reqd answer;
-                        Lwt.return_unit
+                        >>= function
+                        | `Data (ttl, answer) ->
+                            reply ~content_type:"application/dns-message"
+                              ~headers:
+                                [ ("cache-control", Fmt.str "max-age=%lu" ttl) ]
+                              reqd answer;
+                            Lwt.return_unit
+                        | `Close ->
+                            (* TODO: unclear what to do *)
+                            reply ~status:`Gateway_timeout reqd "";
+                            Lwt.return_unit
                       in
                       Lwt.async resolve
                   | _ ->
