@@ -333,7 +333,10 @@ module K = struct
 
     let mirage_metrics_sink =
       let doc =
-        let doc = "Mirage metrics sink. The format is: [mac],sink." in
+        let doc =
+          "Mirage metrics sink. The format is: [mac,]sink. If a mac is \
+           supplied the option only applies to that host."
+        in
         Arg.info ~doc [ "mirage-metrics-sink" ]
       in
       let metrics_conv =
@@ -347,7 +350,8 @@ module K = struct
         let doc =
           "Mirage Vendor-Identifying vendor-specific option. This uses the \
            MirageOS private enterprise number 49836. The format is: \
-           subopt-code,[mac],subopt-data."
+           subopt-code,[mac,]subopt-data. If a mac is supplied the option only \
+           applies to that host."
         in
         Arg.info ~doc [ "mirage-vivso" ]
       in
