@@ -69,3 +69,30 @@ val pp_config : [ `File | `Arg ] -> config Fmt.t
 val parse_file : string -> (config, [> `Msg of string ]) result
 val arg_end_of_directive : unit Angstrom.t
 val parse_one : 'a Angstrom.t -> string -> ('a, [> `Msg of string ]) result
+
+(** {2 Non-dnsmasq options} *)
+
+type mirage_metrics_sink = { tags : string list; sink : string }
+
+val pp_mirage_metrics_sink : mirage_metrics_sink Fmt.t
+val mirage_metrics_sink : unit Angstrom.t -> mirage_metrics_sink Angstrom.t
+val mirage_metrics_sink_docv : string
+val mirage_metrics_sink_c : mirage_metrics_sink Cmdliner.Arg.conv
+
+type mirage_vivso = {
+  tags : string list;
+  subopt_code : int;
+  subopt_data : string;
+}
+
+val pp_mirage_vivso : mirage_vivso Fmt.t
+val mirage_vivso : unit Angstrom.t -> mirage_vivso Angstrom.t
+val mirage_vivso_docv : string
+val mirage_vivso_c : mirage_vivso Cmdliner.Arg.conv
+
+type mirage_certify = string list (* list of tags *)
+
+val pp_mirage_certify : mirage_certify Fmt.t
+val mirage_certify : unit Angstrom.t -> mirage_certify Angstrom.t
+val mirage_certify_docv : string
+val mirage_certify_c : mirage_certify Cmdliner.Arg.conv
