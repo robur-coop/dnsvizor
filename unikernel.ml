@@ -617,7 +617,14 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module Http_client = Http_mirage_client.Make (TCP) (Mimic_he)
   module Map = Map.Make (String)
 
-  type t = { net : Net.t; mac : Macaddr.t; mutable configuration : string }
+  type t = {
+    net : Net.t;
+    mac : Macaddr.t;
+    ip : IPV4V6.t;
+    mutable domain : [ `raw ] Domain_name.t option;
+    mutable hosts : Dhcp_server.Config.host list;
+    mutable configuration : string;
+  }
 
   type intermediate_config = {
     dhcp_hosts :
@@ -863,10 +870,158 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     t.net.config <- Some dhcp_configuration;
     (domain, no_hosts, dnssec, bogus_priv)
 
+  let gen_rev_zones ips =
+    List.fold_left
+      (fun acc -> function
+        | Ipaddr.V4 v4 ->
+            let boundary = ((Ipaddr.V4.Prefix.bits v4 + 7) lsr 3) lsl 3 in
+            let rev_zones =
+              List.of_seq (Ipaddr.V4.Prefix.subnets boundary v4)
+            in
+            let amount = 4 - (boundary lsr 3) in
+            List.fold_left
+              (fun acc net ->
+                let rev_zone =
+                  Domain_name.drop_label_exn ~amount
+                    Ipaddr.V4.(to_domain_name (Prefix.address net))
+                in
+                rev_zone :: acc)
+              acc rev_zones
+        | Ipaddr.V6 v6 ->
+            let boundary = ((Ipaddr.V6.Prefix.bits v6 + 3) lsr 2) lsl 2 in
+            let rev_zones =
+              List.of_seq (Ipaddr.V6.Prefix.subnets boundary v6)
+            in
+            let amount = 32 - (boundary lsr 2) in
+            List.fold_left
+              (fun acc net ->
+                let rev_zone =
+                  Domain_name.drop_label_exn ~amount
+                    Ipaddr.V6.(to_domain_name (Prefix.address net))
+                in
+                rev_zone :: acc)
+              acc rev_zones)
+      [] ips
+
+  let insert_dns_soa trie domain =
+    match domain with
+    | None -> trie
+    | Some domain ->
+        let soa = Dns.Soa.create domain in
+        Dns_trie.insert domain Dns.Rr_map.Soa soa trie
+
+  let insert_dns_rev_soa trie ips =
+    List.fold_left
+      (fun trie rev_zone ->
+        let soa_ptr = Dns.Soa.create rev_zone in
+        Dns_trie.insert rev_zone Dns.Rr_map.Soa soa_ptr trie)
+      trie (gen_rev_zones ips)
+
+  let remove_dns_rev_dns trie ips =
+    List.fold_left
+      (fun trie rev_zone -> Dns_trie.remove_zone rev_zone trie)
+      trie (gen_rev_zones ips)
+
+  let remove_dns_soa trie domain =
+    match domain with
+    | None -> trie
+    | Some zone -> Dns_trie.remove_zone zone trie
+
+  let insert_dns_records trie name domain ip =
+    match domain with
+    | Some domain -> (
+        match Domain_name.prepend_label domain name with
+        | Ok fqdn ->
+            Logs.info (fun m ->
+                m "recording %a to %a" Domain_name.pp fqdn Ipaddr.pp ip);
+            let trie =
+              match ip with
+              | Ipaddr.V4 ip ->
+                  let a_record = (3600l, Ipaddr.V4.Set.singleton ip) in
+                  Dns_trie.insert fqdn Dns.Rr_map.A a_record trie
+              | Ipaddr.V6 ip ->
+                  let aaaa_record = (3600l, Ipaddr.V6.Set.singleton ip) in
+                  Dns_trie.insert fqdn Dns.Rr_map.Aaaa aaaa_record trie
+            in
+            let trie =
+              match Domain_name.host fqdn with
+              | Ok host ->
+                  let ptr_record = (3600l, host) in
+                  let ptr_name = Ipaddr.to_domain_name ip in
+                  Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie
+              | Error (`Msg msg) ->
+                  Logs.warn (fun m ->
+                      m "couldn't construct a host name from %a: %S"
+                        Domain_name.pp fqdn msg);
+                  trie
+            in
+            trie
+        | Error (`Msg msg) ->
+            Logs.warn (fun m ->
+                m "couldn't construct a domain name from %S and %a: %s" name
+                  Domain_name.pp domain msg);
+            trie)
+    | None ->
+        Logs.info (fun m ->
+            m "no domain provided (via --domain), not registering any names");
+        trie
+
   let lookup_src_by_name name =
     List.find_opt (fun src -> Metrics.Src.name src = name) (Metrics.Src.list ())
 
   module Daemon (Resolver : Dns_resolver_mirage_shared.S) = struct
+    let update_dns_for_static_hosts (t : t) domain resolver no_hosts =
+      let trie = Resolver.primary_data resolver in
+      let trie, changed =
+        if Option.equal Domain_name.equal t.domain domain then (trie, false)
+        else (insert_dns_soa (remove_dns_soa trie t.domain) domain, true)
+      in
+      let hosts =
+        match t.net.Net.config with
+        | Some dhcp -> dhcp.Dhcp_server.Config.hosts
+        | None -> []
+      in
+      let trie =
+        List.fold_left
+          (fun trie (host : Dhcp_server.Config.host) ->
+            let need_update =
+              changed
+              || not
+                   (List.exists
+                      (fun (dhcp : Dhcp_server.Config.host) ->
+                        String.equal host.hostname dhcp.hostname
+                        && Option.equal
+                             (fun a b -> Ipaddr.V4.compare a b = 0)
+                             host.fixed_addr dhcp.fixed_addr)
+                      t.hosts)
+            in
+            if need_update then (
+              match host.fixed_addr with
+              | Some ip ->
+                  insert_dns_records trie host.hostname domain (Ipaddr.V4 ip)
+              | None ->
+                  Logs.warn (fun m ->
+                      m "No address recorded for %s, thus no DNS record"
+                        host.hostname);
+                  trie)
+            else trie)
+          trie hosts
+      in
+      let trie =
+        if changed && not no_hosts then
+          List.fold_left
+            (fun trie ip ->
+              insert_dns_records trie
+                (Domain_name.to_string (K.hostname ()))
+                domain ip)
+            trie
+            (List.map Ipaddr.Prefix.address (S.IP.configured_ips t.ip))
+        else trie
+      in
+      t.domain <- domain;
+      t.hosts <- hosts;
+      Resolver.update_primary_data resolver trie
+
     let pp_error ppf = function
       | `Bad_gateway -> Fmt.string ppf "Bad gateway"
       | `Bad_request -> Fmt.string ppf "Bad request"
@@ -1103,7 +1258,8 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                     (Dnsvizor.Config_parser.parse_file config_data)
                     (update_configuration t config_data)
                 with
-                | Ok (_domain, _no_hosts, _dnssec, _bogus_priv) ->
+                | Ok (domain, no_hosts, _dnssec, _bogus_priv) ->
+                    update_dns_for_static_hosts t domain resolver no_hosts;
                     (* TODO: handle domain, no_hosts, dnssec, bogus_priv *)
                     Logs.info (fun m -> m "Dnsmasq config parsed correctly");
                     Some (`Redirect ("/configuration", None))
@@ -1948,40 +2104,18 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           options
       in
       (match
-         ( List.find_opt
-             (function Dhcp_wire.Hostname _ -> true | _ -> false)
-             options,
-           domain )
+         List.find_opt
+           (function Dhcp_wire.Hostname _ -> true | _ -> false)
+           options
        with
-      | Some (Hostname name), Some domain -> (
-          match Domain_name.prepend_label domain name with
-          | Ok fqdn ->
-              Logs.info (fun m -> m "recording %a" Domain_name.pp fqdn);
-              let ptr_name =
-                Ipaddr.V4.to_domain_name lease.Dhcp_server.Lease.addr
-              in
-              let trie = Resolver.primary_data resolver in
-              let a_record =
-                (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
-              in
-              let ptr_record = (3600l, Domain_name.host_exn fqdn) in
-              let trie = Dns_trie.insert fqdn Dns.Rr_map.A a_record trie in
-              let trie =
-                Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie
-              in
-              Resolver.update_primary_data resolver trie
-          | Error (`Msg msg) ->
-              Logs.warn (fun m ->
-                  m "couldn't construct a domain name from %S and %a: %s" name
-                    Domain_name.pp domain msg))
-      | None, _ ->
-          Logs.info (fun m -> m "no Hostname found in the DHCP request")
-      | _, None ->
-          Logs.info (fun m ->
-              m "no domain provided (via --domain), not registering any names")
-      | _ ->
-          Logs.info (fun m ->
-              m "no Hostname or nor domain found in the DHCP request"));
+      | Some (Hostname name) ->
+          let trie = Resolver.primary_data resolver in
+          let trie =
+            insert_dns_records trie name domain
+              (Ipaddr.V4 lease.Dhcp_server.Lease.addr)
+          in
+          Resolver.update_primary_data resolver trie
+      | _ -> Logs.info (fun m -> m "no Hostname found in the DHCP request"));
       (match
          List.find_opt
            (function Dhcp_wire.Client_fqdn _ -> true | _ -> false)
@@ -2140,53 +2274,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       used_metrics;
     let primary_t =
       (* setup DNS server state: *)
-      let trie =
-        let domain, fqdn =
-          match domain with
-          | None -> (K.hostname (), K.hostname ())
-          | Some d -> (
-              match
-                ( Domain_name.host d,
-                  Result.bind
-                    (Domain_name.append (K.hostname ()) d)
-                    Domain_name.host )
-              with
-              | Ok d, Ok fqdn -> (d, fqdn)
-              | _, Error (`Msg m) ->
-                  Logs.err (fun m ->
-                      m "Couldn't figure the FQDN from host %a and domain %a"
-                        Domain_name.pp (K.hostname ()) Domain_name.pp d);
-                  exit Mirage_runtime.argument_error
-              | Error (`Msg m), _ ->
-                  Logs.err (fun m ->
-                      m "Couldn't use the domain %a as host" Domain_name.pp d);
-                  exit Mirage_runtime.argument_error)
-        in
-        let soa = Dns.Soa.create domain in
-        let trie = Dns_trie.insert domain Dns.Rr_map.Soa soa Dns_trie.empty in
-        if no_hosts then trie
-        else
-          let ips = S.IP.configured_ips ip in
-          let ipv4s, ipv6s =
-            List.fold_left
-              (fun (ipv4s, ipv6s) ip ->
-                match ip with
-                | Ipaddr.V4 v4 ->
-                    let v4 = Ipaddr.V4.Prefix.address v4 in
-                    (Ipaddr.V4.Set.add v4 ipv4s, ipv6s)
-                | Ipaddr.V6 v6 ->
-                    let v6 = Ipaddr.V6.Prefix.address v6 in
-                    (ipv4s, Ipaddr.V6.Set.add v6 ipv6s))
-              (Ipaddr.V4.Set.empty, Ipaddr.V6.Set.empty)
-              ips
-          in
-          let a_record = (3600l, ipv4s) and quad_a_record = (3600l, ipv6s) in
-          (if Ipaddr.V4.Set.is_empty ipv4s then trie
-           else Dns_trie.insert fqdn Dns.Rr_map.A a_record trie)
-          |>
-          if Ipaddr.V6.Set.is_empty ipv6s then Fun.id
-          else Dns_trie.insert fqdn Dns.Rr_map.Aaaa quad_a_record
-      in
+      let trie = insert_dns_rev_soa Dns_trie.empty (S.IP.configured_ips ip) in
       let trie =
         List.fold_left
           (Blocklist.add_single_block "boot-parameter")
@@ -2220,6 +2308,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     | Ok js_file ->
         let qname_min = K.qname_minimisation ()
         and opportunistic = K.opportunistic_tls () in
+        let t = { net; mac; ip; domain = None; hosts = []; configuration } in
         (match K.dns_upstream () with
           | None ->
               Logs.info (fun m -> m "using a recursive resolver");
@@ -2240,7 +2329,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               let resolver = Resolver.resolver stack ~root:true resolver in
               net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
-              let t = { net; mac; configuration } in
+              Daemon.update_dns_for_static_hosts t domain resolver no_hosts;
               Lwt.async (fun () ->
                   Daemon.start_resolver t resolver stack tcp http_client js_file
                     password);
@@ -2264,7 +2353,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   ~nameservers:[ ns ] primary_t ~happy_eyeballs stack
                 >>= fun resolver ->
                 net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
-                let t = { net; mac; configuration } in
+                Daemon.update_dns_for_static_hosts t domain resolver no_hosts;
                 Lwt.async (fun () ->
                     Daemon.start_resolver t resolver stack tcp http_client
                       js_file password);
