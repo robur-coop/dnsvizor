@@ -294,8 +294,8 @@ module K = struct
     let mirage_certify =
       let doc =
         let doc =
-          "Mirage dns-certify. Allow this host to acquire a certificate using \
-           ACME DNS-01 challenge. The format is: macaddr."
+          "Mirage dns-certify. Allow hosts matching the given tags to acquire \
+           a certificate using  ACME DNS-01 challenge. The format is: macaddr."
         in
         Arg.info ~doc ~docs ~docv:Config_parser.mirage_certify_docv
           [ "mirage-certify" ]
