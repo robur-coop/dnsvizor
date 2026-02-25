@@ -1,6 +1,6 @@
 val encode : X509.Signing_request.t -> string
 (** [encode csr] is [csr] encoded as a string suitable to put as a
-    Vendor-Identifyin Vendor Class data under the Mirage Private Enterprise
+    Vendor-Identifying Vendor Class data under the Mirage Private Enterprise
     Number (49836). *)
 
 val decode :
