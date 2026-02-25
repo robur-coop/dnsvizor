@@ -944,16 +944,9 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   Dns_trie.insert fqdn Dns.Rr_map.Aaaa aaaa_record trie
             in
             let trie =
-              match Domain_name.host fqdn with
-              | Ok host ->
-                  let ptr_record = (3600l, host) in
-                  let ptr_name = Ipaddr.to_domain_name ip in
-                  Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie
-              | Error (`Msg msg) ->
-                  Logs.warn (fun m ->
-                      m "couldn't construct a host name from %a: %S"
-                        Domain_name.pp fqdn msg);
-                  trie
+              let ptr_record = (3600l, fqdn) in
+              let ptr_name = Ipaddr.to_domain_name ip in
+              Dns_trie.insert ptr_name Dns.Rr_map.Ptr ptr_record trie
             in
             trie
         | Error (`Msg msg) ->
