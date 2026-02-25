@@ -289,7 +289,7 @@ let ok_domain3 () =
     check (result domain_t msg_t) "Domain is good" (Ok expected)
       (parse_one_arg domain input))
 
-let eq_dhcp_option a b =
+let eq_dhcp_option (a : dhcp_option) (b : dhcp_option) =
   List.equal String.equal a.tags b.tags
   && (match (a.vendor, b.vendor) with
     | None, None -> true
