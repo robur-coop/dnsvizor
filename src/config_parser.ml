@@ -236,7 +236,7 @@ let until_comma =
   scan_string () (fun () c ->
       (* FIXME: probably be more precise in accepted characters *)
       match c with
-      | ',' -> None
+      | ',' | '\n' -> None
       | _ -> Some ())
 
 let tag_thing = string "tag:" *> commit *> until_comma
@@ -259,6 +259,23 @@ let dnsmasq_hex ~accept_non_hex:or_id =
   else if or_id then return hex_colon_seperated
   else fail (Fmt.str "bad hex constant: %S" hex_colon_seperated)
 
+let mac_addr =
+  (* NOTE: ocaml-tcpip only supports mac addresses of 6 bytes so let's not
+     try to parse mac addresses for exotic hardware. We will allow ethernet
+     (10 Mb) mac type only. *)
+  (* TODO: wildcards *)
+  let ishex = function
+    | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true
+    | _ -> false
+  in
+  option "" (string "1-") *> peek_string 3 >>= fun first ->
+  if ishex first.[0] && ishex first.[1] && first.[2] = ':' then
+    commit *> take ((6 * 2) + 5) >>= fun mac ->
+    match Macaddr.of_string mac with
+    | Ok mac -> return (`Macaddr mac)
+    | Error (`Msg e) -> fail (Fmt.str "Invalid MAC address: %s: %S" e mac)
+  else fail "not a mac address"
+
 let dhcp_host end_of_directive =
   let lease_time = lease_time >>| fun lease -> `Lease_time lease in
   let id_thing =
@@ -278,23 +295,6 @@ let dhcp_host end_of_directive =
       ]
     *> commit *> until_comma
     >>| fun set -> `Set set
-  in
-  let mac_addr =
-    (* NOTE: ocaml-tcpip only supports mac addresses of 6 bytes so let's not
-       try to parse mac addresses for exotic hardware. We will allow ethernet
-       (10 Mb) mac type only. *)
-    (* TODO: wildcards *)
-    let ishex = function
-      | '0' .. '9' | 'a' .. 'f' | 'A' .. 'F' -> true
-      | _ -> false
-    in
-    option "" (string "1-") *> peek_string 3 >>= fun first ->
-    if ishex first.[0] && ishex first.[1] && first.[2] = ':' then
-      commit *> take ((6 * 2) + 5) >>= fun mac ->
-      match Macaddr.of_string mac with
-      | Ok mac -> return (`Macaddr mac)
-      | Error (`Msg e) -> fail (Fmt.str "Invalid MAC address: %s: %S" e mac)
-    else fail "not a mac address"
   in
   let ipv4_addr = ipv4_dotted >>| fun ip -> `Ipv4addr ip in
   let ignore_thing = string "ignore" *> return `Ignore in
@@ -633,3 +633,65 @@ let parse_file data =
   match parse_string ~consume:Consume.All top data with
   | Ok x -> Ok (List.filter (function `Ignored -> false | _ -> true) x)
   | Error msg -> Error (`Msg msg)
+
+(* Non-DNSmasq options *)
+
+type mirage_metrics_sink = { tags : string list; sink : string }
+
+let pp_tags_trailing_comma ppf tags =
+  Fmt.(list (any "tag:" ++ string ++ any ",")) ppf tags
+
+let pp_mirage_metrics_sink ppf { tags; sink } =
+  Fmt.pf ppf "%a%s" pp_tags_trailing_comma tags sink
+
+let mirage_metrics_sink end_of_directive =
+  many (tag_thing <* char ',') >>= fun tags ->
+  until_comma >>= fun sink -> end_of_directive *> return { tags; sink }
+
+let mirage_metrics_sink_docv = "[tag:<tag>,...]<sink>"
+
+let mirage_metrics_sink_c =
+  conv_cmdliner ~docv:mirage_metrics_sink_docv
+    (mirage_metrics_sink arg_end_of_directive)
+    pp_mirage_metrics_sink
+
+type mirage_vivso = {
+  tags : string list;
+  subopt_code : int;
+  subopt_data : string;
+}
+
+let pp_mirage_vivso ppf { tags; subopt_code; subopt_data } =
+  Fmt.pf ppf "%a%u,%s" pp_tags_trailing_comma tags subopt_code subopt_data
+
+let mirage_vivso end_of_directive =
+  let subopt_code =
+    int >>= fun v ->
+    if v < 0 || v >= 256 then fail "Invalid option number" else return v
+  in
+  many (tag_thing <* char ',') >>= fun tags ->
+  subopt_code >>= fun subopt_code ->
+  until_comma >>= fun subopt_data ->
+  end_of_directive *> return { tags; subopt_code; subopt_data }
+
+let mirage_vivso_docv = "[tag:<tag>,...]<code>,<data>"
+
+let mirage_vivso_c =
+  conv_cmdliner ~docv:mirage_vivso_docv
+    (mirage_vivso arg_end_of_directive)
+    pp_mirage_vivso
+
+type mirage_certify = string list (* tags *)
+
+let pp_mirage_certify ppf tags =
+  Fmt.(list ~sep:(any ",") (any "tag:" ++ string)) ppf tags
+
+let mirage_certify end_of_directive =
+  sep_by1 (char ',') tag_thing <* end_of_directive
+
+let mirage_certify_docv = "tag:<tag>[,tag:<tag>...]"
+
+let mirage_certify_c =
+  conv_cmdliner ~docv:mirage_certify_docv
+    (mirage_certify arg_end_of_directive)
+    pp_mirage_certify

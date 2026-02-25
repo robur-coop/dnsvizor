@@ -1,5 +1,23 @@
 open Lwt.Infix
 
+(* 49836 is MirageOS private enterprise number *)
+let mirage_pen = 49836l
+
+module Tags = Set.Make (String)
+module TagsMap = Map.Make (Tags)
+
+let merge_tagged t1 t2 =
+  let merge _tags o1 o2 =
+    match (o1, o2) with
+    | None, None -> None
+    | Some o, None | None, Some o -> Some o
+    | ( Some (o1 : Dhcp_wire.dhcp_option list),
+        Some (o2 : Dhcp_wire.dhcp_option list) ) ->
+        (* TODO: deduplicate? merge?! *)
+        Some (o1 @ o2)
+  in
+  TagsMap.merge merge t1 t2
+
 module CA = struct
   let prefix =
     X509.Distinguished_name.
@@ -251,6 +269,86 @@ module K = struct
     @? List.map (fun x -> `Dhcp_option x) dhcp_option
     @ List.map (fun x -> `Dhcp_host x) dhcp_host
 
+  module Dhcp_ext = struct
+    let docs = "MIRAGE-SPECIFIC DHCP OPTIONS"
+
+    let mirage_metrics_sink =
+      let doc =
+        let doc = "Mirage metrics sink." in
+        Arg.info ~doc ~docs ~docv:Config_parser.mirage_metrics_sink_docv
+          [ "mirage-metrics-sink" ]
+      in
+      Arg.(value & opt_all Config_parser.mirage_metrics_sink_c [] doc)
+
+    let mirage_vivso =
+      let doc =
+        let doc =
+          "Mirage Vendor-Identifying vendor-specific option. This uses the \
+           MirageOS private enterprise number 49836."
+        in
+        Arg.info ~doc ~docs ~docv:Config_parser.mirage_vivso_docv
+          [ "mirage-vivso" ]
+      in
+      Arg.(value & opt_all Config_parser.mirage_vivso_c [] doc)
+
+    let mirage_certify =
+      let doc =
+        let doc =
+          "Mirage dns-certify. Allow hosts matching the given tags to acquire \
+           a certificate using  ACME DNS-01 challenge. The format is: macaddr."
+        in
+        Arg.info ~doc ~docs ~docv:Config_parser.mirage_certify_docv
+          [ "mirage-certify" ]
+      in
+      Arg.(value & opt_all Dnsvizor.Config_parser.mirage_certify_c [] doc)
+  end
+
+  let mirage_dhcp =
+    let open Cmdliner.Term.Syntax in
+    let+ metrics_sinks = Dhcp_ext.mirage_metrics_sink
+    and+ vivso = Dhcp_ext.mirage_vivso in
+    let metrics_sink_default, metrics_sinks =
+      let option sink =
+        Dhcp_wire.Vi_vendor_info [ (mirage_pen, [ (0, sink) ]) ]
+      in
+      List.fold_left
+        (fun (default, tagged) -> function
+          | { Dnsvizor.Config_parser.tags = []; sink } ->
+              (option sink :: default, tagged)
+          | { tags = _ :: _ as tags; sink } ->
+              let tags = Tags.of_list tags in
+              ( default,
+                TagsMap.update tags
+                  (function
+                    | None -> Some [ option sink ]
+                    | Some options -> Some (option sink :: options))
+                  tagged ))
+        ([], TagsMap.empty) metrics_sinks
+    in
+    let default_vivso, vivso =
+      let option code data =
+        Dhcp_wire.Vi_vendor_info [ (mirage_pen, [ (code, data) ]) ]
+      in
+      List.fold_left
+        (fun (default, tagged) -> function
+          | { Dnsvizor.Config_parser.tags = []; subopt_code; subopt_data } ->
+              (option subopt_code subopt_data :: default, tagged)
+          | { tags = _ :: _ as tags; subopt_code; subopt_data } ->
+              let tags = Tags.of_list tags in
+              ( default,
+                TagsMap.update tags
+                  (function
+                    | None -> Some [ option subopt_code subopt_data ]
+                    | Some options ->
+                        Some (option subopt_code subopt_data :: options))
+                  tagged ))
+        ([], TagsMap.empty) vivso
+    in
+    (metrics_sink_default @ default_vivso, merge_tagged metrics_sinks vivso)
+
+  let mirage_dhcp = Mirage_runtime.register_arg mirage_dhcp
+  let mirage_certify = Mirage_runtime.register_arg Dhcp_ext.mirage_certify
+
   let qname_minimisation =
     let doc =
       Arg.info ~doc:"Use qname minimisation (RFC 9156)."
@@ -400,7 +498,9 @@ module Net (N : Mirage_net.S) = struct
     mutable leases : Dhcp_server.Lease.database;
     mutable lease_acquired :
       Dhcp_server.Lease.t ->
-      Dhcp_wire.dhcp_option list ->
+      pkt:Dhcp_wire.pkt ->
+      theirs:Dhcp_wire.dhcp_option list ->
+      ours:Dhcp_wire.dhcp_option list ->
       (Dhcp_wire.dhcp_option list, unit) result Lwt.t;
   }
 
@@ -440,12 +540,10 @@ module Net (N : Mirage_net.S) = struct
                         (Dhcp_server.Lease.to_string lease)
                         Fmt.(list ~sep:(any ", ") string)
                         (List.map Dhcp_wire.dhcp_option_to_string opts));
-                  t.lease_acquired lease opts >>= function
+                  t.lease_acquired lease ~pkt ~theirs:opts ~ours:reply.options
+                  >>= function
                   | Ok options ->
-                      let reply =
-                        Dhcp_wire.
-                          { reply with options = reply.options @ options }
-                      in
+                      let reply = Dhcp_wire.{ reply with options } in
                       Lwt.return (Ok reply)
                   | Error _ as e -> Lwt.return e))
             >>= function
@@ -482,7 +580,7 @@ module Net (N : Mirage_net.S) = struct
 
   let connect net config =
     let leases = Dhcp_server.Lease.make_db () in
-    let lease_acquired _ _ = Lwt.return (Ok []) in
+    let lease_acquired _ ~pkt:_ ~theirs:_ ~ours:_ = Lwt.return (Ok []) in
     { net; config; leases; lease_acquired }
 
   let disconnect _ =
@@ -509,6 +607,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module S =
     Tcpip_stack_direct.MakeV4V6 (Net) (ETH) (ARP) (IPV4V6) (ICMP) (UDP) (TCP)
 
+  module Dns_mirage = Dns_mirage.Make (S)
   module Resolver = Dns_resolver_mirage.Make (S)
   module Stub = Dns_stub_mirage.Make (S)
   module HTTP = Paf_mirage.Make (TCP)
@@ -525,7 +624,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       (string list * Macaddr.t list * string * Ipaddr.V4.t option) list;
     dhcp_range : (Ipaddr.V4.t * Ipaddr.V4.t option * int option) option;
     dhcp_options : Dhcp_wire.dhcp_option list;
-    tagged_dhcp_options : Dhcp_wire.dhcp_option list Map.t;
+    tagged_dhcp_options : Dhcp_wire.dhcp_option list TagsMap.t;
     domain : [ `raw ] Domain_name.t option;
     no_hosts : bool;
     dnssec : bool;
@@ -564,6 +663,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               ( Dhcp_wire.Log_servers _ | Dhcp_wire.Vendor_specific _
               | Dhcp_wire.Routers _ | Dhcp_wire.Dns_servers _ ) as option;
             tags = [];
+            vendor = None;
           }
         :: r ->
           gather { acc with dhcp_options = option :: acc.dhcp_options } r
@@ -572,26 +672,22 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
             option =
               ( Dhcp_wire.Log_servers _ | Dhcp_wire.Vendor_specific _
               | Dhcp_wire.Routers _ | Dhcp_wire.Dns_servers _ ) as option;
-            tags = [ tag ];
+            tags = _ :: _ as tags;
+            vendor = None;
           }
         :: r ->
-          (* TODO: if there are multiple tags then *all* tags must be matched.
-             So to make it simpler we only consider one tag for now. *)
+          (* If there are multiple tags then *all* tags must be matched. *)
+          let tags = Tags.of_list tags in
           let tagged_dhcp_options =
-            (* OCaml>=5.1: use Map.add_to_list *)
-            Map.update tag
+            (* OCaml>=5.1: use TagsMap.add_to_list *)
+            TagsMap.update tags
               (function
                 | None -> Some [ option ]
                 | Some options -> Some (option :: options))
               acc.tagged_dhcp_options
           in
           gather { acc with tagged_dhcp_options } r
-      | `Dhcp_option ({ tags = _a :: _b :: _ } as dhcp_option) :: _ ->
-          Error
-            (Fmt.str
-               "Don't know how to handle dhcp-option with multiple tags %a"
-               Dnsvizor.Config_parser.pp_dhcp_option dhcp_option)
-      | `Dhcp_option ({ option = _ } as dhcp_option) :: _ ->
+      | `Dhcp_option ({ option = _; _ } as dhcp_option) :: _ ->
           Error
             (Fmt.str "Don't know how to handle dhcp-option %a"
                Dnsvizor.Config_parser.pp_dhcp_option dhcp_option)
@@ -635,7 +731,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         dhcp_hosts = [];
         dhcp_range = None;
         dhcp_options = [];
-        tagged_dhcp_options = Map.empty;
+        tagged_dhcp_options = TagsMap.empty;
         domain = None;
         no_hosts = false;
         dnssec = false;
@@ -681,6 +777,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       Option.to_list
         (Option.map (fun x -> Dhcp_wire.Routers [ x ]) (K.ipv4_gateway ()))
     and dns_server = [ Dhcp_wire.Dns_servers [ ipv4_address ] ] in
+    let mirage_default_options, mirage_hosts = K.mirage_dhcp () in
     let options =
       (if
          List.exists
@@ -700,21 +797,36 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
              (fun domain ->
                Dhcp_wire.Domain_name (Domain_name.to_string domain))
              domain)
+      @ mirage_default_options
+    in
+    let certify_tagged =
+      (* The empty string is a dummy value that will be replaced in dhcp_lease_cb *)
+      let option = Dhcp_wire.Vi_vendor_info [ (mirage_pen, [ (1, "") ]) ] in
+      TagsMap.of_seq
+      @@ Seq.map (fun tags -> (Tags.of_list tags, [ option ]))
+      @@ List.to_seq (K.mirage_certify ())
+    in
+    let tagged_dhcp_options =
+      tagged_dhcp_options
+      |> merge_tagged certify_tagged
+      |> merge_tagged mirage_hosts
     in
     let hosts =
       List.concat_map
         (fun (sets, macs, hostname, fixed_addr) ->
+          let sets = Tags.of_list sets in
           List.map
             (fun hw_addr ->
               let options =
-                List.fold_left
-                  (fun acc tag ->
-                    match Map.find_opt tag tagged_dhcp_options with
-                    | None -> acc
-                    | Some additional_options ->
-                        (* XXX: do we need to deduplicate?! *)
-                        additional_options @ acc)
-                  options sets
+                TagsMap.fold
+                  (fun tags additional_options acc ->
+                    (* XXX: do we need to deduplicate?! *)
+                    if Tags.subset tags sets then additional_options @ acc
+                    else acc)
+                  tagged_dhcp_options
+                  (* The [hostname] field doesn't actually do anything in charrua-server -
+                      so we add a Hostname dhcp option *)
+                  (Dhcp_wire.Hostname hostname :: options)
               in
               { Dhcp_server.Config.hw_addr; hostname; fixed_addr; options })
             macs)
@@ -1518,6 +1630,101 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   end
 
   module Dhcp_dns (Resolver : Dns_resolver_mirage_shared.S) = struct
+    let query_certificate flow name csr =
+      match
+        Dns_certify.query Mirage_crypto_rng.generate (Mirage_ptime.now ()) name
+          csr
+      with
+      | Error e -> Lwt.return (Error e)
+      | Ok (out, k) -> (
+          Dns_mirage.send_tcp (Dns_mirage.flow flow) (Cstruct.of_string out)
+          >>= function
+          | Error () -> Lwt.return (Error (`Msg "tcp sending error"))
+          | Ok () -> (
+              Dns_mirage.read_tcp flow >|= function
+              | Error () -> Error (`Msg "tcp receive error")
+              | Ok data -> k (Cstruct.to_string data)))
+
+    let nsupdate_csr flow host keyname zone dnskey csr =
+      match
+        Dns_certify.nsupdate Mirage_crypto_rng.generate Mirage_ptime.now ~host
+          ~keyname ~zone dnskey csr
+      with
+      | Error _ as e -> Lwt.return e
+      | Ok (out, k) -> (
+          Dns_mirage.send_tcp (Dns_mirage.flow flow) (Cstruct.of_string out)
+          >>= function
+          | Error () -> Lwt.return (Error (`Msg "tcp sending error"))
+          | Ok () -> (
+              Dns_mirage.read_tcp flow >|= function
+              | Error () -> Error (`Msg "tcp receive error")
+              | Ok data -> (
+                  match k (Cstruct.to_string data) with
+                  | Error e ->
+                      Error
+                        (`Msg
+                           (Fmt.str "nsupdate reply error %a"
+                              Dns_certify.pp_u_err e))
+                  | Ok () as ok -> ok)))
+
+    let query_certificate_or_csr flow hostname keyname zone dnskey csr =
+      query_certificate flow hostname csr >>= function
+      | Ok _certificate ->
+          Logs.debug (fun m -> m "found certificate in DNS");
+          Lwt.return (Dns_certify.letsencrypt_name hostname)
+      | Error (`Msg msg) as e ->
+          Logs.warn (fun m -> m "query_certificate_or_csr error: %s" msg);
+          Lwt.return e
+      | Error ((`Decode _ | `Bad_reply _ | `Unexpected_reply _) as e) ->
+          Logs.err (fun m ->
+              m "query error %a, giving up" Dns_certify.pp_q_err e);
+          Lwt.return (Error (`Msg "query error"))
+      | Error `No_tlsa -> (
+          Logs.debug (fun m ->
+              m "no certificate in DNS, need to transmit the CSR");
+          nsupdate_csr flow hostname keyname zone dnskey csr >>= function
+          | Error (`Msg msg) as e ->
+              Logs.warn (fun m -> m "failed to nsupdate TLSA: %s" msg);
+              Lwt.return e
+          | Ok () -> Lwt.return (Dns_certify.letsencrypt_name hostname))
+
+    let query_certificate_or_csr tcp hostname csr =
+      match (K.dns_key (), K.dns_server ()) with
+      | None, _ ->
+          Logs.info (fun m -> m "no DNS key provided");
+          Lwt.return (Ok None)
+      | _, None ->
+          Logs.info (fun m -> m "no DNS server IP provided");
+          Lwt.return (Ok None)
+      | Some (key_name, key), Some ip -> (
+          let key_domain = Domain_name.drop_label_exn ~amount:2 key_name in
+          match (Domain_name.host hostname, Domain_name.host key_domain) with
+          | Error (`Msg e), _ ->
+              Logs.err (fun m -> m "bad domain: %s" e);
+              Lwt.return (Ok None)
+          | _, Error (`Msg e) ->
+              Logs.err (fun m -> m "bad key domain: %s" e);
+              Lwt.return (Ok None)
+          | Ok hostname, Ok key_domain ->
+              if Domain_name.is_subdomain ~subdomain:hostname ~domain:key_domain
+              then
+                S.TCP.create_connection tcp (ip, 53) >>= function
+                | Error e ->
+                    Logs.warn (fun m ->
+                        m "error %a while connecting to name server"
+                          S.TCP.pp_error e);
+                    Lwt.return (Error (`Msg "couldn't connect to name server"))
+                | Ok flow ->
+                    let flow = Dns_mirage.of_flow flow in
+                    query_certificate_or_csr flow hostname key_name key_domain
+                      key csr
+                    >|= Result.map (fun domain -> Some (ip, domain))
+              else (
+                Logs.warn (fun m ->
+                    m "Requested a DNS update with %a, but key domain is %a"
+                      Domain_name.pp hostname Domain_name.pp key_domain);
+                Lwt.return (Ok None)))
+
     let update_dns tcp lease name =
       match (K.dns_key (), K.dns_server ()) with
       | Some (key_name, key), Some ip ->
@@ -1715,7 +1922,31 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               Logs.info (fun m -> m "no TLSTUNNEL server IP provided");
               Lwt.return [])
 
-    let dhcp_lease_cb tcp resolver domain lease options =
+    let dhcp_lease_cb tcp resolver domain lease ~pkt ~theirs:options
+        ~ours:options' =
+      let strip_mirage_certify options =
+        List.filter_map
+          (function
+            | Dhcp_wire.Vi_vendor_info vivso ->
+                let vivso =
+                  List.filter_map
+                    (function
+                      | 49836l (*mirage_pen*), subopts ->
+                          let subopts =
+                            List.filter
+                              (function 1, _ -> false | _ -> true)
+                              subopts
+                          in
+                          if subopts = [] then None
+                          else Some (mirage_pen, subopts)
+                      | x -> Some x)
+                    vivso
+                in
+                if vivso = [] then None
+                else Some (Dhcp_wire.Vi_vendor_info vivso)
+            | opt -> Some opt)
+          options
+      in
       (match
          ( List.find_opt
              (function Dhcp_wire.Hostname _ -> true | _ -> false)
@@ -1759,13 +1990,93 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
         | Some (Dhcp_wire.Client_fqdn (flags, name)) ->
             if List.mem `Server_A flags && not (List.mem `No_update flags) then
               update_dns tcp lease name >>= fun r ->
-              update_tlstunnel tcp lease name >>= fun r2 -> Lwt.return (r @ r2)
-            else Lwt.return []
+              update_tlstunnel tcp lease name >>= fun r2 ->
+              Lwt.return (Some name, r @ r2)
+            else Lwt.return (None, [])
         | None ->
             Logs.info (fun m -> m "no client FQDN requested");
-            Lwt.return []
+            Lwt.return (None, [])
         | Some _ -> assert false)
-      >>= fun options -> Lwt.return (Ok options)
+      >>= function
+      | None, new_options ->
+          let options' = strip_mirage_certify options' in
+          Lwt.return (Ok (options' @ new_options))
+      | Some hostname, new_options ->
+          if
+            List.exists
+              (function
+                | Dhcp_wire.Vi_vendor_info vivso ->
+                    List.exists
+                      (function
+                        | 49836l, subopts ->
+                            Option.is_some (List.assoc_opt 1 subopts)
+                        | _ -> false)
+                      vivso
+                | _ -> false)
+              options'
+          then
+            match
+              Dhcp_wire.collect_vi_vendor_class options
+              |> List.assoc_opt mirage_pen
+            with
+            | None ->
+                (* As the client is not in the list we don't need to strip *)
+                Lwt.return (Ok (options' @ new_options))
+            | Some datas -> (
+                match
+                  List.find_map
+                    (fun data ->
+                      match Dnsvizor_csr.decode data with
+                      | Error `Not_csr -> None
+                      | Error (`Msg e) ->
+                          Logs.warn (fun m ->
+                              m
+                                "Error decoding Mirage vendor-identifying \
+                                 vendor class data: %s"
+                                e);
+                          None
+                      | Ok csr -> Some csr)
+                    datas
+                with
+                | None -> Lwt.return_error ()
+                | Some csr -> (
+                    query_certificate_or_csr tcp hostname csr >>= function
+                    | Error _ -> Lwt.return_error ()
+                    | Ok domain ->
+                        (* Replace the mirage-certify option with the domain name where to
+               find the certificate. *)
+                        let options' =
+                          let domain =
+                            Option.map Dnsvizor_csr.encode_src domain
+                          in
+                          assert (domain <> Some "");
+                          List.map
+                            (function
+                              | Dhcp_wire.Vi_vendor_info vivso ->
+                                  let vivso =
+                                    List.map
+                                      (function
+                                        | 49836l (*mirage_pen*), subopts ->
+                                            ( mirage_pen,
+                                              List.filter_map
+                                                (function
+                                                  | 1, _ ->
+                                                      Option.map
+                                                        (fun d -> (1, d))
+                                                        domain
+                                                  | subopt -> Some subopt)
+                                                subopts )
+                                        | x -> x)
+                                      vivso
+                                  in
+                                  Dhcp_wire.Vi_vendor_info vivso
+                              | opt -> opt)
+                            options'
+                        in
+                        Lwt.return (Ok (options' @ new_options))))
+          else
+            let options' = strip_mirage_certify options' in
+            Lwt.return (Ok (options' @ new_options))
   end
 
   let start net assets =
