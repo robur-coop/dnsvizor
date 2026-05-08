@@ -1,4 +1,4 @@
-(* mirage >= 4.10.0 & < 4.11.0 *)
+(* mirage >= 4.11.0 & < 4.12.0 *)
 (* Copyright Robur, 2020 *)
 
 open Mirage
@@ -28,8 +28,7 @@ let dnsvizor =
       package ~min:"3.0.0" "ethernet";
       package ~min:"3.0.0" ~sublibs:[ "mirage" ] "arp";
       package ~min:"7.0.0"
-        ~sublibs:[ "ipv4"; "tcp"; "udp"; "icmpv4"; "stack-direct"; "ipv6" ]
-        "tcpip";
+        ~sublibs:[ "ipv4"; "udp"; "icmpv4"; "stack-direct"; "ipv6" ] "tcpip";
       package ~min:"3.1.0" "charrua";
       package "charrua-server";
       package ~min:"4.5.0" ~sublibs:[ "network" ] "mirage-runtime";
@@ -37,6 +36,8 @@ let dnsvizor =
       package "http-mirage-client";
       package "angstrom";
       package "multipart_form";
+      package ~sublibs:[ "mirage" ] "utcp";
+
     ]
   in
   main ~local_libs ~packages "Unikernel.Main" (network @-> kv_ro @-> job)
