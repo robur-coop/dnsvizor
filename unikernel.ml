@@ -602,7 +602,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
   module IPV4V6 = Tcpip_stack_direct.IPV4V6 (IPV4) (IPV6)
   module ICMP = Icmpv4.Make (IPV4)
   module UDP = Udp.Make (IPV4V6)
-  module TCP = Tcp.Flow.Make (IPV4V6)
+  module TCP = Utcp_mirage.Make (IPV4V6)
 
   module S =
     Tcpip_stack_direct.MakeV4V6 (Net) (ETH) (ARP) (IPV4V6) (ICMP) (UDP) (TCP)
@@ -2244,7 +2244,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
     >>= fun ip ->
     ICMP.connect ipv4 >>= fun icmp ->
     UDP.connect ip >>= fun udp ->
-    TCP.connect ip >>= fun tcp ->
+    let tcp = TCP.connect "service" ip in
     S.connect net eth arp ip icmp udp tcp >>= fun stack ->
     HE.connect_device stack >>= fun he ->
     Dns_client.connect (stack, he) >>= fun dns_client ->
