@@ -578,10 +578,10 @@ module Net (N : Mirage_net.S) = struct
     in
     N.listen t.net ~header_size dhcp_or_not
 
-  let connect net config =
+  let connect net =
     let leases = Dhcp_server.Lease.make_db () in
     let lease_acquired _ ~pkt:_ ~theirs:_ ~ours:_ = Lwt.return (Ok []) in
-    { net; config; leases; lease_acquired }
+    { net; config = None; leases; lease_acquired }
 
   let disconnect _ =
     Logs.warn (fun m -> m "ignoring disconnect");
@@ -2228,7 +2228,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
           Logs.err (fun m -> m "Bad configuration: %s" e);
           exit Mirage_runtime.argument_error
     in
-    let net = Net.connect net (Some dhcp_config) in
+    let net = Net.connect net in
     ETH.connect net >>= fun eth ->
     ARP.connect eth >>= fun arp ->
     ARP.add_ip arp (Ipaddr.V4.Prefix.address (K.ipv4 ())) >>= fun () ->
@@ -2335,6 +2335,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               in
               let resolver = Resolver.resolver stack ~root:true resolver in
               net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
+              net.config <- Some dhcp_config;
               Daemon.update_dns_for_static_hosts t domain resolver no_hosts;
               Lwt.async (fun () ->
                   Daemon.start_resolver t resolver stack tcp http_client js_file
@@ -2359,6 +2360,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
                   ~nameservers:[ ns ] primary_t ~happy_eyeballs stack
                 >>= fun resolver ->
                 net.lease_acquired <- Dhcp_dns.dhcp_lease_cb tcp resolver domain;
+                net.config <- Some dhcp_config;
                 Daemon.update_dns_for_static_hosts t domain resolver no_hosts;
                 Lwt.async (fun () ->
                     Daemon.start_resolver t resolver stack tcp http_client
