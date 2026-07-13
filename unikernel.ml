@@ -2356,6 +2356,13 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
       | Some _ -> assert false
   end
 
+  let rec clean_dhcp_db (t : Net.t) () =
+    Mirage_sleep.ns (Duration.of_sec 10) >>= fun () ->
+    let now = Mirage_mtime.elapsed_ns () |> Duration.to_sec |> Int32.of_int in
+    let db, rm_leases = Dhcp_server.Lease.garbage_collect t.leases ~now in
+    t.leases <- db;
+    Lwt_list.iter_s t.lease_expired rm_leases >>= fun () -> clean_dhcp_db t ()
+
   let start net assets =
     let mac = N.mac net in
     let configuration, dhcp_config, domain, no_hosts, dnssec, add_reserved =
@@ -2510,5 +2517,7 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
               with Invalid_argument a ->
                 Logs.err (fun m -> m "error %s" a);
                 exit Mirage_runtime.argument_error))
-        >>= fun () -> S.listen stack
+        >>= fun () ->
+        Lwt.async (clean_dhcp_db net);
+        S.listen stack
 end
