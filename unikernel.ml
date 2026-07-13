@@ -2115,10 +2115,10 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
            options
        with
       | Some (Hostname name) ->
-          (* mollymawk can create clones. if the original unikernel is 
-          called blog, then the clones will be named blog-clone-<int> where int >= 1
-        and so when these clones request for an ip, we should register the ip with the 
-        same hostname as the original unikernel.*)
+          (* mollymawk can create clones. if the original unikernel is called
+             blog, then the clones will be named blog-clone-<int> where int >= 1
+             and so when these clones request for an ip, we should register the
+             ip with the same hostname as the original unikernel.*)
           let name =
             match String.split_on_char '-' name with
             | hostname :: "clone" :: _ ->
