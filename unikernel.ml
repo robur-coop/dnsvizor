@@ -115,6 +115,15 @@ module K = struct
     let domain = Arg.conv (Domain_name.of_string, Domain_name.pp) in
     Mirage_runtime.register_arg Arg.(value & opt_all domain [] doc)
 
+  let strip_clone_from_hostname =
+    let doc =
+      Arg.info
+        ~doc:
+          "When registering hostnames to DNS, strip \"-clone-*\" from the hostname. This is for interoperation with mollymawk scaling up."
+        [ "strip-clone-from-hostname" ]
+    in
+    Mirage_runtime.register_arg Arg.(value & flag doc)
+
   (* DNSmasq configuration options *)
   module Dnsmasq = struct
     let s_dnsmasq = "DNSMASQ-COMPATIBLE OPTIONS"
@@ -2120,15 +2129,17 @@ module Main (N : Mirage_net.S) (ASSETS : Mirage_kv.RO) = struct
              and so when these clones request for an ip, we should register the
              ip with the same hostname as the original unikernel.*)
           let name =
-            match String.split_on_char '-' name with
-            | hostname :: "clone" :: _ ->
-                Logs.info (fun m ->
-                    m
-                      "The client %s is a mollymawk clone. Setting hostname to \
-                       %s"
-                      name hostname);
-                hostname
-            | _ -> name
+            if not (K.strip_clone_from_hostname ()) then name
+            else
+              match String.split_on_char '-' name with
+              | hostname :: "clone" :: _ ->
+                  Logs.info (fun m ->
+                      m
+                        "The client %s is a mollymawk clone. Setting hostname \
+                         to %s"
+                        name hostname);
+                  hostname
+              | _ -> name
           in
           let trie = Resolver.primary_data resolver in
           let trie =
