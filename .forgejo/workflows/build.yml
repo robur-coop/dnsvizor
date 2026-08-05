@@ -3,11 +3,8 @@ on: [push]
 
 jobs:
   build:
-    runs-on: ["medium", "debian-13-x86_64"]
+    runs-on: ["FreeBSD"]
     steps:
-      - name: Install opam
-        run: DEBIAN_FRONTEND=noninteractive sudo -E apt install --yes opam
-
       - name: Setup opam
         run: opam init -a --comp=4.14.4
 
@@ -22,7 +19,7 @@ jobs:
         run: eval `opam env` && mirage configure -t hvt -f config.ml
 
       - name: Install dependencies
-        run: eval `opam env` && make depend
+        run: eval `opam env` && gmake depend
 
       - name: Build unikernel
-        run: eval `opam env` && make build
+        run: eval `opam env` && gmake build
