@@ -21,12 +21,12 @@ let merge_tagged t1 t2 =
 module CA = struct
   let prefix =
     X509.Distinguished_name.
-      [ Relative_distinguished_name.singleton (CN "DNSvizor") ]
+      [ Relative_distinguished_name.singleton (CN (Common_name.v "DNSvizor")) ]
 
   let cacert_dn =
     let open X509.Distinguished_name in
     prefix
-    @ [ Relative_distinguished_name.singleton (CN "Ephemeral CA for DNSvizor") ]
+    @ [ Relative_distinguished_name.singleton (CN (Common_name.v "Ephemeral CA for DNSvizor")) ]
 
   let cacert_lifetime = Ptime.Span.v (365, 0L)
   let _10s = Ptime.Span.of_int_s 10

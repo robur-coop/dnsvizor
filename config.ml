@@ -38,6 +38,7 @@ let dnsvizor =
       package "angstrom";
       package "multipart_form";
       package ~sublibs:[ "mirage" ] "utcp";
+      package ~min:"1.2.0" "x509";
     ]
   in
   main ~local_libs ~packages "Unikernel.Main" (network @-> kv_ro @-> job)
