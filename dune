@@ -1,0 +1,58 @@
+(executable
+ (name unikernel)
+ (enabled_if
+  (= %{context_name} "solo5"))
+ (link_flags :standard -cclib "-z solo5-abi=hvt")
+ (modules :standard)
+ (libraries
+  mkernel
+  mnet
+  mnet-cli
+  mnet-dns
+  mnet-dns.cli
+  mnet-dhcp
+  vifu
+  mirage-crypto-rng-mkernel
+  charrua-server
+  utcp
+  cmdliner
+  mhttp
+  dns-server
+  x509
+  gmp
+  fmt
+  mnet-tls
+  tyxml
+  ptime
+  digestif
+  dnsvizor-csr
+  dnsvizor)
+ (foreign_stubs
+  (language c)
+  (names manifest)))
+
+(rule
+ (targets manifest.c)
+ (enabled_if
+  (= %{context_name} "default"))
+ (action
+  (write-file manifest.c "")))
+
+(rule
+ (targets manifest.c)
+ (deps manifest.json)
+ (enabled_if
+  (= %{context_name} "solo5"))
+ (action
+  (run solo5-elftool gen-manifest manifest.json manifest.c)))
+
+(rule
+ (targets assets.ml etag.ml)
+ (deps
+  (source_tree assets))
+ (action
+  (with-stdout-to
+   assets.ml
+   (run mcrunch -s --checksums=etag.ml --file=main_js:assets/main.js))))
+
+(vendored_dirs vendors)

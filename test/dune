@@ -1,4 +1,6 @@
 (test
+ (enabled_if
+  (= %{context_name} "default"))
  (name config_tests)
  (modules config_tests)
  (package dnsvizor)

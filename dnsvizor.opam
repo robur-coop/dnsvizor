@@ -27,7 +27,22 @@ depends: [
   "logs" {>= "0.7.0"}
   "ohex" {>= "0.2.0"}
   "charrua" {>= "2.1.0"}
-
+  "mkernel"
+  "mnet"
+  "mnet-cli"
+  "mnet-dns"
+  "mnet-dhcp"
+  "mnet-tls"
+  "dns-server"
+  "vifu"
+  "mhttp"
+  "utcp"
+  "gmp"
+  "fmt"
+  "tyxml"
+  "ptime"
+  "digestif"
+  "mirage-crypto-rng-mkernel"
   "alcotest" {with-test & >= "1.8.0"}
 ]
 available: arch != "arm32" & arch != "x86_32"
