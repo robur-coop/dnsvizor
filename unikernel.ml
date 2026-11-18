@@ -1,6 +1,3 @@
-open Cmdliner
-open Dnsvizor
-
 (* 49836 is MirageOS private enterprise number *)
 let mirage_pen = 49836l
 
@@ -543,6 +540,509 @@ let rec clean_dhcp_db (t : Net.t) () =
   List.iter t.lease_expired rm_leases;
   clean_dhcp_db t ()
 
+  (*TODO: placeholder resolver. *)
+module type RESOLVER = sig
+  type t
+
+  val primary_data : t -> Dns_trie.t
+  val update_primary_data : t -> Dns_trie.t -> unit
+end
+
+module Dhcp_dns (Resolver : RESOLVER) = struct
+  let send_tcp flow data =
+    (* according to rfc 1035, sending dns messages over tcp must be preceded by 2 bytes containing the length. *)
+    let len = Bytes.create 2 in
+    Bytes.set_uint16_be len 0 (String.length data);
+    let payload = Bytes.to_string len ^ data in
+    try
+      Mnet.TCP.write flow payload;
+      Ok ()
+    with exn -> (
+      Mnet.TCP.close flow;
+      match exn with
+      | Mnet.TCP.Net_unreach -> Error "network is unreachable"
+      | Mnet.TCP.Connection_refused -> Error "connection refused"
+      | Mnet.TCP.Closed_by_peer -> Error "closed by peer"
+      | _ -> Error "an unknown error occured")
+
+  let read_tcp flow =
+    match Mnet.TCP.read flow with
+    | Ok data ->
+        let res = String.concat "" data in
+        if String.length res >= 2 then
+          let len = String.get_uint16_be res 0 in
+          if String.length res >= 2 + len then Ok (String.sub res 2 len)
+          else Error "received short DNS reply"
+        else Error "received a too short DNS reply"
+    | Error `Eof -> Error "end of file"
+    | Error `Refused -> Error "refused"
+
+  let query_certificate flow name csr =
+    match
+      Dns_certify.query Mirage_crypto_rng.generate (Mkernel.now ()) name csr
+    with
+    | Error e -> Error e
+    | Ok (out, k) -> (
+        match send_tcp flow out with
+        | Error err -> Error (`Msg ("tcp sending error: " ^ err))
+        | Ok () -> (
+            match read_tcp flow with
+            | Error err -> Error (`Msg ("tcp receive error: " ^ err))
+            | Ok data -> k data))
+
+  let nsupdate_csr flow host keyname zone dnskey csr =
+    match
+      Dns_certify.nsupdate Mirage_crypto_rng.generate Mkernel.now ~host ~keyname
+        ~zone dnskey csr
+    with
+    | Error _ as e -> e
+    | Ok (out, k) -> (
+        match send_tcp flow out with
+        | Error err -> Error (`Msg ("tcp sending error: " ^ err))
+        | Ok () -> (
+            match read_tcp flow with
+            | Error err -> Error (`Msg ("tcp receive error: " ^ err))
+            | Ok data -> (
+                match k data with
+                | Error e ->
+                    Error
+                      (`Msg
+                         (Fmt.str "nsupdate reply error %a" Dns_certify.pp_u_err
+                            e))
+                | Ok () as ok -> ok)))
+
+  let query_certificate_or_csr flow hostname keyname zone dnskey csr =
+    match query_certificate flow hostname csr with
+    | Ok _certificate ->
+        Logs.debug (fun m -> m "found certificate in DNS");
+        Dns_certify.letsencrypt_name hostname
+    | Error (`Msg msg) as e ->
+        Logs.warn (fun m -> m "query_certificate_or_csr error: %s" msg);
+        e
+    | Error ((`Decode _ | `Bad_reply _ | `Unexpected_reply _) as e) ->
+        Logs.err (fun m -> m "query error %a, giving up" Dns_certify.pp_q_err e);
+        Error (`Msg "query error")
+    | Error `No_tlsa -> (
+        Logs.debug (fun m ->
+            m "no certificate in DNS, need to transmit the CSR");
+        match nsupdate_csr flow hostname keyname zone dnskey csr with
+        | Error (`Msg msg) as e ->
+            Logs.warn (fun m -> m "failed to nsupdate TLSA: %s" msg);
+            e
+        | Ok () -> Dns_certify.letsencrypt_name hostname)
+
+  let query_certificate_or_csr tcp hostname csr dns_key dns_server =
+    match (dns_key, dns_server) with
+    | None, _ ->
+        Logs.info (fun m -> m "no DNS key provided");
+        Ok None
+    | _, None ->
+        Logs.info (fun m -> m "no DNS server IP provided");
+        Ok None
+    | Some (key_name, key), Some ip -> (
+        let key_domain = Domain_name.drop_label_exn ~amount:2 key_name in
+        match (Domain_name.host hostname, Domain_name.host key_domain) with
+        | Error (`Msg e), _ ->
+            Logs.err (fun m -> m "bad domain: %s" e);
+            Ok None
+        | _, Error (`Msg e) ->
+            Logs.err (fun m -> m "bad key domain: %s" e);
+            Ok None
+        | Ok hostname, Ok key_domain ->
+            if Domain_name.is_subdomain ~subdomain:hostname ~domain:key_domain
+            then
+              try
+                let flow =
+                  Mnet.TCP.connect ~kind:Mnet.TCP.Direct tcp (ip, 53)
+                in
+                let res =
+                  query_certificate_or_csr flow hostname key_name key_domain key
+                    csr
+                in
+                Mnet.TCP.close flow;
+                Result.map (fun domain -> Some (ip, domain)) res
+              with exn ->
+                Error (`Msg ("connection refused: " ^ Printexc.to_string exn))
+            else (
+              Logs.warn (fun m ->
+                  m "Requested a DNS update with %a, but key domain is %a"
+                    Domain_name.pp hostname Domain_name.pp key_domain);
+              Ok None))
+
+  let send_dns_update tcp ip key key_name key_domain name update =
+    let open Dns in
+    let zone = Packet.Question.create key_domain Rr_map.Soa
+    and header =
+      (Randomconv.int16 Mirage_crypto_rng.generate, Packet.Flags.empty)
+    in
+    let packet = Packet.create header zone (`Update update) in
+    match
+      Dns_tsig.encode_and_sign ~proto:`Tcp packet (Mkernel.now ()) key key_name
+    with
+    | Error s ->
+        Logs.err (fun m ->
+            m "Error %a while encoding and signing %a" Dns_tsig.pp_s s
+              Domain_name.pp name);
+        []
+    | Ok (data, mac) -> (
+        try
+          let flow = Mnet.TCP.connect ~kind:Mnet.TCP.Direct tcp (ip, 53) in
+          match send_tcp flow data with
+          | Error e ->
+              Logs.err (fun m ->
+                  m "Failed to write to DNS server %a: %s" Ipaddr.pp ip e);
+              []
+          | Ok () -> (
+              let reply = read_tcp flow in
+              Mnet.TCP.close flow;
+              match reply with
+              | Error e ->
+                  Logs.err (fun m ->
+                      m "Failed to read from DNS server %a: %s" Ipaddr.pp ip e);
+                  []
+              | Ok data -> (
+                  match
+                    Dns_tsig.decode_and_verify (Mkernel.now ()) key key_name
+                      ~mac data
+                  with
+                  | Error e ->
+                      Logs.err (fun m ->
+                          m "error %a while decoding nsupdate answer %a"
+                            Dns_tsig.pp_e e Domain_name.pp name);
+                      []
+                  | Ok (res, _, _) -> (
+                      match
+                        Packet.reply_matches_request ~request:packet res
+                      with
+                      | Ok `Update_ack ->
+                          Logs.info (fun m -> m "successfully updated DNS");
+                          let options =
+                            [ Dhcp_wire.Client_fqdn ([ `Overriden ], name) ]
+                          in
+                          options
+                      | Ok e ->
+                          Logs.warn (fun m ->
+                              m "failed to update DNS, unexpected reply: %a"
+                                Dns.Packet.pp_reply e);
+                          []
+                      | Error e ->
+                          Logs.err (fun m ->
+                              m "invalid reply %a for %a, got %a"
+                                Packet.pp_mismatch e Packet.pp packet Packet.pp
+                                res);
+                          [])))
+        with exn ->
+          Logs.err (fun m ->
+              m "cannot reach the DNS server %a: %s" Ipaddr.pp ip
+                (Printexc.to_string exn));
+          [])
+
+  let update_dns tcp lease name dns_key dns_server =
+    match (dns_key, dns_server) with
+    | Some (key_name, key), Some ip ->
+        let key_domain = Domain_name.drop_label_exn ~amount:2 key_name in
+        if Domain_name.is_subdomain ~subdomain:name ~domain:key_domain then
+          let update =
+            let actions =
+              let a =
+                (3600l, Ipaddr.V4.Set.singleton lease.Dhcp_server.Lease.addr)
+              in
+              Dns.Packet.Update.
+                [ Remove Dns.Rr_map.(K A); Add Dns.Rr_map.(B (A, a)) ]
+            in
+            let update = Domain_name.Map.singleton name actions in
+            (Domain_name.Map.empty, update)
+          in
+          send_dns_update tcp ip key key_name key_domain name update
+        else (
+          Logs.warn (fun m ->
+              m "Requested a DNS update with %a, but key domain is %a"
+                Domain_name.pp name Domain_name.pp key_domain);
+          [])
+    | None, _ ->
+        Logs.info (fun m -> m "no DNS key provided");
+        []
+    | _, None ->
+        Logs.info (fun m -> m "no DNS server IP provided");
+        []
+
+  let remove_dns tcp name dns_key dns_server =
+    match (dns_key, dns_server) with
+    | Some (key_name, key), Some ip ->
+        let key_domain = Domain_name.drop_label_exn ~amount:2 key_name in
+        if Domain_name.is_subdomain ~subdomain:name ~domain:key_domain then
+          let update =
+            let actions = Dns.Packet.Update.[ Remove Dns.Rr_map.(K A) ] in
+            let update = Domain_name.Map.singleton name actions in
+            (Domain_name.Map.empty, update)
+          in
+          ignore (send_dns_update tcp ip key key_name key_domain name update)
+        else
+          Logs.warn (fun m ->
+              m "Requested a DNS update with %a, but key domain is %a"
+                Domain_name.pp name Domain_name.pp key_domain)
+    | None, _ -> Logs.info (fun m -> m "no DNS key provided")
+    | _, None -> Logs.info (fun m -> m "no DNS server IP provided")
+
+  let send_command_to_tlstunnel tcp ip name cmd =
+    let data = Tlstunnel.cmd_to_str cmd in
+    try
+      let flow = Mnet.TCP.connect ~kind:Mnet.TCP.Direct tcp (ip, 1234) in
+      match send_tcp flow data with
+      | Error e ->
+          Logs.err (fun m ->
+              m "Failed to write to TLSTUNNEL server %a: %s" Ipaddr.pp ip e)
+      | Ok () -> (
+          let reply = read_tcp flow in
+          Mnet.TCP.close flow;
+          match reply with
+          | Error e ->
+              Logs.err (fun m ->
+                  m "Failed to read from TLSTUNNEL server %a: %s" Ipaddr.pp ip e)
+          | Ok data -> (
+              match Tlstunnel.cmd_of_str data with
+              | Ok (Result (0, _)) ->
+                  Logs.app (fun m ->
+                      m "recorded %a in TLSTUNNEL" Domain_name.pp name)
+              | Ok (Result (n, msg)) ->
+                  Logs.err (fun m ->
+                      m "failed to record %a in TLSTUNNEL: %u (%s)"
+                        Domain_name.pp name n msg)
+              | Ok r ->
+                  Logs.err (fun m ->
+                      m "Expected a result from TLSTUNNEL, got %a"
+                        Tlstunnel.pp_cmd r)
+              | Error (`Msg msg) ->
+                  Logs.err (fun m ->
+                      m "error while recording %a in TLSTUNNEL: %s"
+                        Domain_name.pp name msg)))
+    with exn ->
+      Logs.err (fun m ->
+          m "cannot reach the TLSTUNNEL server %a: %s" Ipaddr.pp ip
+            (Printexc.to_string exn))
+
+  let update_tlstunnel tcp lease name tlstunnel_server =
+    match Domain_name.host name with
+    | Error (`Msg msg) ->
+        Logs.err (fun m ->
+            m "cannot construct a host from %a: %s" Domain_name.pp name msg)
+    | Ok name -> (
+        match tlstunnel_server with
+        | Some ip ->
+            let cmd =
+              Tlstunnel.Add (name, Ipaddr.V4 lease.Dhcp_server.Lease.addr, 80)
+            in
+            send_command_to_tlstunnel tcp ip name cmd
+        | None -> Logs.info (fun m -> m "no TLSTUNNEL server IP provided"))
+
+  let remove_tlstunnel tcp name tlstunnel_server =
+    match Domain_name.host name with
+    | Error (`Msg msg) ->
+        Logs.err (fun m ->
+            m "cannot construct a host from %a: %s" Domain_name.pp name msg)
+    | Ok name -> (
+        match tlstunnel_server with
+        | Some ip ->
+            let cmd = Tlstunnel.Remove name in
+            send_command_to_tlstunnel tcp ip name cmd
+        | None -> Logs.info (fun m -> m "no TLSTUNNEL server IP provided"))
+
+  let dhcp_lease_cb tcp resolver domain lease ~ours:options'
+      strip_clone_from_hostname dns_key dns_server tlstunnel_server =
+    let options = lease.Dhcp_server.Lease.client_requested_options in
+    let strip_mirage_certify options =
+      List.filter_map
+        (function
+          | Dhcp_wire.Vi_vendor_info vivso ->
+              let vivso =
+                List.filter_map
+                  (function
+                    | 49836l (*mirage_pen*), subopts ->
+                        let subopts =
+                          List.filter
+                            (function 1, _ -> false | _ -> true)
+                            subopts
+                        in
+                        if subopts = [] then None else Some (mirage_pen, subopts)
+                    | x -> Some x)
+                  vivso
+              in
+              if vivso = [] then None else Some (Dhcp_wire.Vi_vendor_info vivso)
+          | opt -> Some opt)
+        options
+    in
+    (match
+       List.find_opt
+         (function Dhcp_wire.Hostname _ -> true | _ -> false)
+         options
+     with
+    | Some (Hostname name) ->
+        (* mollymawk can create clones. if the original unikernel is called
+               blog, then the clones will be named blog-clone-<int> where int >= 1
+               and so when these clones request for an ip, we should register the
+               ip with the same hostname as the original unikernel.*)
+        let name =
+          if not strip_clone_from_hostname then name
+          else
+            match String.split_on_char '-' name with
+            | hostname :: "clone" :: _ ->
+                Logs.info (fun m ->
+                    m
+                      "The client %s is a mollymawk clone. Setting hostname to \
+                       %s"
+                      name hostname);
+                hostname
+            | _ -> name
+        in
+        let trie = Resolver.primary_data resolver in
+        let trie =
+          insert_dns_records trie name domain
+            (Ipaddr.V4 lease.Dhcp_server.Lease.addr)
+        in
+        Resolver.update_primary_data resolver trie
+    | _ -> Logs.info (fun m -> m "no Hostname found in the DHCP request"));
+    match
+      match
+        List.find_opt
+          (function Dhcp_wire.Client_fqdn _ -> true | _ -> false)
+          options
+      with
+      | Some (Dhcp_wire.Client_fqdn (flags, name)) ->
+          if List.mem `Server_A flags && not (List.mem `No_update flags) then (
+            let r = update_dns tcp lease name dns_key dns_server in
+            update_tlstunnel tcp lease name tlstunnel_server;
+            (Some name, r))
+          else (None, [])
+      | None ->
+          Logs.info (fun m -> m "no client FQDN requested");
+          (None, [])
+      | Some _ -> assert false
+    with
+    | None, new_options ->
+        let options' = strip_mirage_certify options' in
+        Ok (options' @ new_options)
+    | Some hostname, new_options ->
+        if
+          List.exists
+            (function
+              | Dhcp_wire.Vi_vendor_info vivso ->
+                  List.exists
+                    (function
+                      | 49836l, subopts ->
+                          Option.is_some (List.assoc_opt 1 subopts)
+                      | _ -> false)
+                    vivso
+              | _ -> false)
+            options'
+        then
+          match
+            Dhcp_wire.collect_vi_vendor_class options
+            |> List.assoc_opt mirage_pen
+          with
+          | None ->
+              (* As the client is not in the list we don't need to strip *)
+              Ok (options' @ new_options)
+          | Some datas -> (
+              match
+                List.find_map
+                  (fun data ->
+                    match Dnsvizor_csr.decode data with
+                    | Error `Not_csr -> None
+                    | Error (`Msg e) ->
+                        Logs.warn (fun m ->
+                            m
+                              "Error decoding Mirage vendor-identifying vendor \
+                               class data: %s"
+                              e);
+                        None
+                    | Ok csr -> Some csr)
+                  datas
+              with
+              | None -> Error ()
+              | Some csr -> (
+                  match
+                    query_certificate_or_csr tcp hostname csr dns_key dns_server
+                  with
+                  | Error _ -> Error ()
+                  | Ok domain ->
+                      (* Replace the mirage-certify option with the domain name where to
+                 find the certificate. *)
+                      let options' =
+                        let domain =
+                          Option.map Dnsvizor_csr.encode_src domain
+                        in
+                        assert (domain <> Some "");
+                        List.map
+                          (function
+                            | Dhcp_wire.Vi_vendor_info vivso ->
+                                let vivso =
+                                  List.map
+                                    (function
+                                      | 49836l (*mirage_pen*), subopts ->
+                                          ( mirage_pen,
+                                            List.filter_map
+                                              (function
+                                                | 1, _ ->
+                                                    Option.map
+                                                      (fun d -> (1, d))
+                                                      domain
+                                                | subopt -> Some subopt)
+                                              subopts )
+                                      | x -> x)
+                                    vivso
+                                in
+                                Dhcp_wire.Vi_vendor_info vivso
+                            | opt -> opt)
+                          options'
+                      in
+                      Ok (options' @ new_options)))
+        else
+          let options' = strip_mirage_certify options' in
+          Ok (options' @ new_options)
+
+  let dhcp_lease_expired tcp resolver domain lease dns_key dns_server
+      tlstunnel_server =
+    let options = lease.Dhcp_server.Lease.client_requested_options in
+    (match
+       List.find_opt
+         (function Dhcp_wire.Hostname _ -> true | _ -> false)
+         options
+     with
+    | Some (Hostname name) ->
+        (* mollymawk can create clones. if the original unikernel is called blog,
+            then the clones will be named blog-clone-<int> where int >= 1 and so
+            when these clones request for an ip, we should register the ip with
+            the same hostname as the original unikernel.*)
+        let name =
+          match String.split_on_char '-' name with
+          | hostname :: "clone" :: _ ->
+              Logs.info (fun m ->
+                  m "The client %s is a mollymawk clone. Setting hostname to %s"
+                    name hostname);
+              hostname
+          | _ -> name
+        in
+        let trie = Resolver.primary_data resolver in
+        let trie =
+          remove_dns_records trie name domain
+            (Ipaddr.V4 lease.Dhcp_server.Lease.addr)
+        in
+        Resolver.update_primary_data resolver trie
+    | _ -> Logs.info (fun m -> m "no Hostname found in the DHCP request"));
+    match
+      List.find_opt
+        (function Dhcp_wire.Client_fqdn _ -> true | _ -> false)
+        options
+    with
+    | Some (Dhcp_wire.Client_fqdn (flags, name)) ->
+        if List.mem `Server_A flags && not (List.mem `No_update flags) then (
+          remove_dns tcp name dns_key dns_server;
+          remove_tlstunnel tcp name tlstunnel_server)
+        else ()
+    | None -> Logs.info (fun m -> m "no client FQDN requested")
+    | Some _ -> assert false
+end
+
 let rng =
   let fn () =
     Mirage_crypto_rng_mkernel.(initialize (module Mirage_crypto_rng.Fortuna))
@@ -560,6 +1060,9 @@ let http =
       }
   in
   `H1 h1
+
+open Cmdliner
+open Dnsvizor
 
 (* DNSmasq configuration options *)
 module Dnsmasq = struct
