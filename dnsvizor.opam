@@ -17,7 +17,7 @@ build: [
 
 depends: [
   "dune" {>= "2.9"}
-  "ocaml" {>= "4.14.0"}
+  "ocaml" {>= "5.4"}
   "odoc" {with-doc}
 
   "angstrom" { >= "0.14.0" }
@@ -34,6 +34,7 @@ depends: [
   "mnet-dhcp"
   "mnet-tls"
   "dns-server"
+  "dns-certify"
   "vifu"
   "mhttp"
   "utcp"

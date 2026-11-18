@@ -18,6 +18,7 @@
   cmdliner
   mhttp
   dns-server
+  dns-certify
   x509
   gmp
   fmt

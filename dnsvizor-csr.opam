@@ -17,7 +17,7 @@ build: [
 
 depends: [
   "dune" {>= "2.9"}
-  "ocaml" {>= "4.14.0"}
+  "ocaml" {>= "5.4"}
   "odoc" {with-doc}
   "x509" {>= "1.0.0"}
   "ipaddr"
